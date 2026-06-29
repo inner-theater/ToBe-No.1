@@ -47,6 +47,9 @@
   const ownerActions  = $('#owner-actions');
   const startBtn      = $('#start-btn');
   const leaveRoomBtn  = $('#leave-room-btn');
+  const replayBtn     = $('#replay-btn');
+  const propModeCheck = $('#prop-mode-checkbox');
+  const propModeLabel = $('#prop-mode-label');
   const waitingRoomTitle = $('#waiting-room-title');
   const roomSubtitle  = $('#room-subtitle');
 
@@ -552,8 +555,9 @@
     switchView('waiting');
     waitingRoomTitle.textContent = '⚔️ ' + room.name;
     roomSubtitle.textContent = isRoomOwner ? '你是房主，等人齐就能开始！' : '等待房主开始...';
-    if (isRoomOwner) ownerActions.style.display = 'block';
-    else ownerActions.style.display = 'none';
+    if (isRoomOwner) { ownerActions.style.display = 'block'; propModeLabel.style.display = 'block'; }
+    else { ownerActions.style.display = 'none'; propModeLabel.style.display = 'none'; }
+    replayBtn.style.display = 'none';
     allPlayers = [];
     gameActive = false; gameFinished = false;
     fetchWaitingPlayers();
@@ -607,24 +611,7 @@
     ).join('');
   }
 
-  leaveRoomBtn.addEventListener('click', async () => {
-    const wasOwner = isRoomOwner && currentRoom;
-    await supabase.from('room_members').delete().eq('user_token', playerToken).eq('room_id', roomId);
-    // 房主离开 → 顺延第一个人为新房主
-    if (wasOwner) {
-      const { data: members } = await supabase.from('room_members').select('*').eq('room_id', roomId).order('joined_at', { ascending: true }).limit(1);
-      if (members && members.length > 0) {
-        await supabase.from('room_members').update({ is_owner: true }).eq('id', members[0].id);
-        await supabase.from('rooms').update({ creator_token: members[0].user_token }).eq('id', roomId);
-      }
-    }
-    stopAllIntervals();
-    currentRoom = null; isRoomOwner = false; roomId = null; allPlayers = [];
-    localStorage.removeItem('active_room_id');
-    localStorage.removeItem('active_room_name');
-    localStorage.removeItem('active_room_owner');
-    enterLobby();
-  });
+  leaveRoomBtn.addEventListener('click', exitRoomToLobby);
 
   // ===================== 游戏（保留原逻辑，适配新流程）=====================
   startBtn.addEventListener('click', async () => {
@@ -756,12 +743,26 @@
     }, 1000);
   }
 
-  async function showResults(players) {
+  async   function showResults(players) {
     const sorted = (players||[]).filter(p=>p.is_finished).sort((a,b)=>b.final_score-a.final_score);
+    // 获取头像（从 onlineUsers 或 users 表查找）
+    const tokenMap = {};
+    onlineUsers.forEach(u => { tokenMap[u.player_token] = { nick: u.nickname, avatar: u.avatar_b64 }; });
+
     rankingList.innerHTML = sorted.map((p,i)=>{
       const cls = i===sorted.length-1&&sorted.length>1?'rank-item last-place':'rank-item';
       const medal = i<3?['🥇','🥈','🥉'][i]:'';
-      return `<div class="${cls}"><span class="rank-badge">${medal} #${i+1}</span><div class="rank-info"><div class="rank-name">${escapeHTML(p.name)}</div><div class="rank-buff">${p.buff||'无'} | ${p.click_count}次</div></div><span class="rank-score">${p.final_score}分</span></div>`;
+      const info = tokenMap[p.player_token] || {};
+      const avatarImg = info.avatar ? `<img src="${info.avatar}" class="rank-avatar">` : '<span class="rank-avatar-empty">👤</span>';
+      return `<div class="${cls}">
+        <span class="rank-badge">${medal} #${i+1}</span>
+        <div class="rank-avatar-wrap">${avatarImg}</div>
+        <div class="rank-info">
+          <div class="rank-name">${escapeHTML(p.name)}</div>
+          <div class="rank-buff">${escapeHTML(p.buff||'无Buff')} | 点击 ${p.click_count} 次</div>
+        </div>
+        <span class="rank-score">${p.final_score}分</span>
+      </div>`;
     }).join('');
     if (sorted.length>0) {
       loserNameEl.textContent = sorted[sorted.length-1].name;
@@ -769,31 +770,59 @@
         await supabase.from('game_history').insert({
           room_name: currentRoom ? currentRoom.name : '',
           room_id: currentRoom ? currentRoom.id : '',
-          players_json: JSON.stringify(sorted.map(p=>({name:p.name,score:p.final_score,clicks:p.click_count,buff:p.buff}))),
-          loser: sorted[sorted.length-1].name,
+          players_json: sorted.map(p=>({
+            name:p.name, nickname:p.name, score:p.final_score, clicks:p.click_count,
+            buff:p.buff, avatar:(tokenMap[p.player_token]||{}).avatar||''
+          })),
+          loser: sorted[sorted.length-1].player_token,
+          loser_nickname: sorted[sorted.length-1].name,
           played_at: new Date().toISOString()
         });
       } catch(e) {}
     }
     switchView('result');
-    if (isRoomOwner) ownerReset.style.display = 'block';
-    else ownerReset.style.display = 'none';
+    if (isRoomOwner) { ownerReset.style.display = 'block'; replayBtn.style.display = 'block'; }
+    else { ownerReset.style.display = 'none'; replayBtn.style.display = 'none'; }
+    // 非房主也可看到返回大厅
+    backToLobbyBtn.style.display = 'block';
+  }
+
+  // 房主离开后顺延下一位
+  async function promoteNextOwner() {
+    const { data: members } = await supabase.from('room_members').select('*').eq('room_id', roomId).order('joined_at', { ascending: true });
+    if (!members || members.length === 0) return;
+    const newOwner = members[0];
+    if (newOwner.user_token !== currentRoom.creator_token) {
+      await supabase.from('room_members').update({ is_owner: true }).eq('id', newOwner.id);
+      await supabase.from('rooms').update({ creator_token: newOwner.user_token }).eq('id', roomId);
+    }
+  }
+
+  async function exitRoomToLobby() {
+    const wasOwner = isRoomOwner;
+    await supabase.from('room_members').delete().eq('user_token', playerToken).eq('room_id', roomId);
+    if (wasOwner) await promoteNextOwner();
+    stopAllIntervals();
+    currentRoom = null; isRoomOwner = false; roomId = null; allPlayers = [];
+    localStorage.removeItem('active_room_id');
+    localStorage.removeItem('active_room_name');
+    localStorage.removeItem('active_room_owner');
+    enterLobby();
   }
 
   resetBtn.addEventListener('click', async () => {
-    if (!confirm('确定开启新一轮？')) return;
     await supabase.from('players').delete().eq('room_id', roomId);
     clickCount=0; gameActive=false; gameFinished=false;
     enterWaitingRoom(currentRoom);
   });
 
-  backToLobbyBtn.addEventListener('click', () => {
-    stopAllIntervals();
-    localStorage.removeItem('active_room_id');
-    localStorage.removeItem('active_room_name');
-    localStorage.removeItem('active_room_owner');
-    enterLobby();
+  replayBtn.addEventListener('click', async () => {
+    await supabase.from('players').delete().eq('room_id', roomId);
+    clickCount=0; gameActive=false; gameFinished=false;
+    enterWaitingRoom(currentRoom);
   });
+
+  backToLobbyBtn.addEventListener('click', exitRoomToLobby);
 
   // 历史记录
   historyBtn.addEventListener('click', () => showHistory());
