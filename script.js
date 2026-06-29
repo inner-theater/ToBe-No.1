@@ -839,30 +839,63 @@
     animateItemFly(target.player_token, itemType);
   }
 
+  // 道具效果映射：{ cssClass, pushStrength, duration }
+  const ITEM_EFFECTS = {
+    tomato:  { cls:'avatar-hit-red',    push:8,  dur:2000, emoji:'🍅' },
+    egg:     { cls:'avatar-hit-yellow', push:5,  dur:2000, emoji:'🥚' },
+    broccoli:{ cls:'avatar-hit-green',  push:5,  dur:2000, emoji:'🥦' },
+    drumstick:{ cls:'avatar-hit-brown', push:6,  dur:2000, emoji:'🍗' },
+    bomb:    { cls:'avatar-hit-burnt',  push:15, dur:2000, emoji:'💣' },
+    rocket:  { cls:'avatar-hit-burnt',  push:20, dur:2000, emoji:'🚀' },
+    '666':   { cls:'',                  push:4,  dur:1500, emoji:'6️⃣6️⃣6️⃣' },
+    poop:    { cls:'avatar-hit-brown',  push:6,  dur:2000, emoji:'💩' },
+  };
+
   function animateItemFly(toToken, itemType) {
     const fromEl = lobbyStage.querySelector(`[data-token="${playerToken}"]`);
     const toEl = lobbyStage.querySelector(`[data-token="${toToken}"]`);
     if (!fromEl || !toEl) return;
+    const eff = ITEM_EFFECTS[itemType] || ITEM_EFFECTS.tomato;
     const fromR = fromEl.getBoundingClientRect();
     const toR = toEl.getBoundingClientRect();
-    const emojis = { tomato:'🍅', egg:'🥚', broccoli:'🥦', drumstick:'🍗', bomb:'💣', rocket:'🚀', '666':'6️⃣6️⃣6️⃣', poop:'💩' };
+
+    // 飞行动画
     const fly = document.createElement('span');
     fly.className = 'item-fly animate';
-    fly.textContent = emojis[itemType] || '💥';
-    fly.style.setProperty('--fly-dx', (toR.left - fromR.left) + 'px');
+    fly.textContent = eff.emoji;
+    fly.style.setProperty('--fly-dx', (toR.left - fromR.left + toR.width/2) + 'px');
     fly.style.setProperty('--fly-dy', (toR.top - fromR.top) + 'px');
     fly.style.left = fromR.left + 'px';
     fly.style.top = fromR.top + 'px';
     document.body.appendChild(fly);
     setTimeout(() => {
       fly.remove();
+      // 命中特效
       const hit = document.createElement('span');
       hit.className = 'hit-effect';
-      hit.textContent = emojis[itemType] || '💥';
+      hit.textContent = eff.emoji;
       hit.style.left = (toR.left + toR.width/2) + 'px';
-      hit.style.top = (toR.top) + 'px';
+      hit.style.top = toR.top + 'px';
       document.body.appendChild(hit);
       setTimeout(() => hit.remove(), 600);
+
+      // 对目标头像施加效果
+      if (eff.cls) {
+        toEl.classList.add(eff.cls);
+        setTimeout(() => toEl.classList.remove(eff.cls), eff.dur);
+      }
+      // 物理撞击 + 抖动
+      toEl.classList.add('avatar-impact');
+      setTimeout(() => toEl.classList.remove('avatar-impact'), 500);
+      // 施加推力
+      const pu = physicsUsers[toToken];
+      if (pu) {
+        const dx = pu.x - physicsUsers[playerToken]?.x || 0;
+        const dy = pu.y - physicsUsers[playerToken]?.y || 0;
+        const dist = Math.sqrt(dx*dx+dy*dy) || 1;
+        pu.vx += (dx/dist) * eff.push * 0.5;
+        pu.vy += (dy/dist) * eff.push * 0.5;
+      }
     }, 1000);
   }
 

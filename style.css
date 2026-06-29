@@ -98,9 +98,16 @@ body::before{
   100%{ transform:translate(var(--fly-dx),var(--fly-dy)) scale(0.5); opacity:0 }
 }
 
-/* 击中目标效果 */
+/* 道具击中效果 */
 .hit-effect{ position:absolute; font-size:2rem; pointer-events:none; z-index:101; animation:hitBurst .6s ease-out forwards }
 @keyframes hitBurst{ 0%{ transform:scale(0); opacity:1 } 100%{ transform:scale(2); opacity:0 } }
+.avatar-hit-red .avatar-circle img{ filter:brightness(1.3) sepia(1) hue-rotate(-30deg) saturate(3) }
+.avatar-hit-burnt .avatar-circle img{ filter:brightness(0.3) sepia(1) saturate(3) }
+.avatar-hit-green .avatar-circle img{ filter:brightness(1.2) sepia(1) hue-rotate(60deg) saturate(2) }
+.avatar-hit-yellow .avatar-circle img{ filter:brightness(1.3) sepia(1) hue-rotate(-10deg) saturate(2) }
+.avatar-hit-brown .avatar-circle img{ filter:brightness(0.8) sepia(1) hue-rotate(-20deg) saturate(2) }
+.avatar-impact{ animation:impactShake .5s ease-out }
+@keyframes impactShake{ 0%{ transform:translate(0,0) } 15%{ transform:translate(-8px,4px) } 30%{ transform:translate(6px,-3px) } 50%{ transform:translate(-4px,2px) } 70%{ transform:translate(2px,-1px) } 100%{ transform:translate(0,0) } }
 /* 头像上方弹幕气泡 */
 .chat-bubble{
   position:absolute;
