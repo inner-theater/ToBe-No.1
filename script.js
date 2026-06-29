@@ -1044,6 +1044,19 @@
 
     if (savedNick) {
       myProfile = { nickname: savedNick, avatar_b64: savedAvatar || '' };
+      // 以 DB 中的 player_token 为准，确保 room_members 关联不丢
+      const { data: dbUser } = await supabase.from('users').select('player_token,avatar_b64').eq('nickname', savedNick).limit(1);
+      if (dbUser && dbUser.length > 0) {
+        playerToken = dbUser[0].player_token;
+        localStorage.setItem('player_token', playerToken);
+        myProfile.avatar_b64 = dbUser[0].avatar_b64 || savedAvatar || '';
+      } else {
+        // 新设备第一次：用当前 token 创建记录
+        await supabase.from('users').insert({
+          nickname: savedNick, avatar_b64: savedAvatar || '',
+          player_token: playerToken, is_online: true, last_seen: new Date().toISOString()
+        });
+      }
       // 检查是否有未退出的房间
       const savedRoomId = localStorage.getItem('active_room_id');
       const savedRoomName = localStorage.getItem('active_room_name');
@@ -1060,8 +1073,8 @@
           if (!member || member.length === 0) {
             await supabase.from('room_members').insert({ room_id: roomId, user_token: playerToken, is_owner: isRoomOwner });
           }
-          // 在线
-          await supabase.from('users').update({ player_token: playerToken, is_online: true, last_seen: new Date().toISOString() }).eq('nickname', savedNick);
+          // 在线（不覆盖 player_token，避免 room_members 关联丢失）
+          await supabase.from('users').update({ is_online: true, last_seen: new Date().toISOString() }).eq('nickname', savedNick);
           enterWaitingRoom(room);
           return;
         }
