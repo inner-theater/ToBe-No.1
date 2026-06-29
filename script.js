@@ -575,10 +575,36 @@
       is_owner: u.player_token === (currentRoom ? currentRoom.creator_token : ''),
       game_started: false
     }));
+    // 检测房主是否已切换到自己
+    const myMember = (members || []).find(m => m.user_token === playerToken);
+    if (myMember && myMember.is_owner && !isRoomOwner) {
+      isRoomOwner = true;
+      currentRoom.creator_token = playerToken;
+      localStorage.setItem('active_room_owner', '1');
+      roomSubtitle.textContent = '你是房主，等人齐就能开始！';
+    }
+
+    // 如果房间没有人是 owner（比如房主关网页了），第一个成员自动晋升
+    const hasOwner = (members || []).some(m => m.is_owner);
+    if (!hasOwner && (members || []).length > 0) {
+      const first = members[0]; // 已按 joined_at 排序
+      // 只有第一个成员的客户端执行晋升，避免多人同时操作
+      if (first.user_token === playerToken) {
+        await supabase.from('room_members').update({ is_owner: true }).eq('id', first.id);
+        await supabase.from('rooms').update({ creator_token: first.user_token }).eq('id', roomId);
+        isRoomOwner = true;
+        currentRoom.creator_token = playerToken;
+        localStorage.setItem('active_room_owner', '1');
+        roomSubtitle.textContent = '你是房主，等人齐就能开始！';
+        if (gameChannel) {
+          gameChannel.send({ type: 'broadcast', event: 'owner_changed', payload: { new_owner: first.user_token } });
+        }
+      }
+    }
     renderPlayerListUI();
     playerCountEl.textContent = allPlayers.length;
-    if (isRoomOwner) ownerActions.style.display = 'block';
-    else ownerActions.style.display = 'none';
+    if (isRoomOwner) { ownerActions.style.display = 'block'; propModeLabel.style.display = 'block'; }
+    else { ownerActions.style.display = 'none'; propModeLabel.style.display = 'none'; }
 
     // 所有非房主检测游戏是否已开始（同时通过 players 表和 Realtime 双重保障）
     if (!gameActive && !gameFinished) {
@@ -791,9 +817,13 @@
     const { data: members } = await supabase.from('room_members').select('*').eq('room_id', roomId).order('joined_at', { ascending: true });
     if (!members || members.length === 0) return;
     const newOwner = members[0];
-    if (newOwner.user_token !== currentRoom.creator_token) {
-      await supabase.from('room_members').update({ is_owner: true }).eq('id', newOwner.id);
-      await supabase.from('rooms').update({ creator_token: newOwner.user_token }).eq('id', roomId);
+    // 确保只有新 owner 的 is_owner 为 true
+    await supabase.from('room_members').update({ is_owner: false }).eq('room_id', roomId).neq('id', newOwner.id);
+    await supabase.from('room_members').update({ is_owner: true }).eq('id', newOwner.id);
+    await supabase.from('rooms').update({ creator_token: newOwner.user_token }).eq('id', roomId);
+    // 广播通知房间内所有人
+    if (gameChannel) {
+      gameChannel.send({ type: 'broadcast', event: 'owner_changed', payload: { new_owner: newOwner.user_token } });
     }
   }
 
@@ -1007,6 +1037,10 @@
           stopAllIntervals();
           enterGamePhase();
         }
+      })
+      .on('broadcast', { event: 'owner_changed' }, () => {
+        // 立即刷新人员列表，fetchWaitingPlayers 会检测并更新 owner UI
+        fetchWaitingPlayers();
       })
       .on('postgres_changes', { event:'*', schema:'public', table:'players', filter: 'room_id=eq.'+roomId }, payload => {
         if (!gameActive && !gameFinished && payload.new && payload.new.game_started) {
