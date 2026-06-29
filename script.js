@@ -27,8 +27,6 @@
 
   // Lobby
   const lobbyStage       = $('#lobby-stage');
-  const myAvatarSmall    = $('#my-avatar-small');
-  const myNicknameDisp   = $('#my-nickname-display');
   const roomList         = $('#room-list');
   const createRoomBtn    = $('#create-room-btn');
   const roomCreateForm   = $('#room-create-form');
@@ -37,7 +35,6 @@
   const barrageLayer     = $('#barrage-layer');
   const commentInput     = $('#comment-input');
   const commentSendBtn   = $('#comment-send-btn');
-  const itemPalette      = $('#item-palette');
   const itemPopup        = $('#item-popup');
   const itemTargetName   = $('#item-target-name');
   const itemPopupClose   = $('#item-popup-close');
@@ -218,10 +215,6 @@
     stopAllIntervals();
     switchView('lobby');
 
-    // 显示自己的头像昵称
-    myAvatarSmall.innerHTML = myProfile.avatar_b64 ? `<img src="${myProfile.avatar_b64}">` : '';
-    myNicknameDisp.textContent = myProfile.nickname;
-
     // 标记在线
     await supabase.from('users').update({ is_online: true, last_seen: new Date().toISOString() }).eq('player_token', playerToken);
 
@@ -262,7 +255,7 @@
       existing[token] = { el, x: parseFloat(el.style.left), y: parseFloat(el.style.top) };
     });
 
-    const currentTokens = new Set(onlineUsers.filter(u => u.player_token !== playerToken).map(u => u.player_token));
+    const currentTokens = new Set(onlineUsers.map(u => u.player_token));
     const stageW = lobbyStage.clientWidth || 500;
     const stageH = lobbyStage.clientHeight || 300;
 
@@ -271,10 +264,10 @@
       if (!currentTokens.has(token)) existing[token].el.remove();
     });
 
-    // 添加/更新在线用户
+    // 添加/更新在线用户（包含自己）
     onlineUsers.forEach(user => {
-      if (user.player_token === playerToken) return;
       let existingEl = existing[user.player_token];
+      const isSelf = user.player_token === playerToken;
       if (!existingEl) {
         const div = document.createElement('div');
         div.className = 'float-avatar';
@@ -284,7 +277,7 @@
         div.innerHTML = `
           <div class="avatar-circle">${user.avatar_b64 ? `<img src="${user.avatar_b64}">` : ''}</div>
           <span class="avatar-nick">${escapeHTML(user.nickname)}</span>`;
-        div.addEventListener('click', () => openItemPopup(user));
+        if (!isSelf) div.addEventListener('click', () => openItemPopup(user));
         lobbyStage.appendChild(div);
       } else {
         existingEl.el.querySelector('.avatar-nick').textContent = user.nickname;
@@ -582,37 +575,22 @@
     });
   });
 
-  // 底部道具按钮
-  itemPalette.querySelectorAll('.item-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const now = Date.now();
-      if (now - lastItemTime < ITEM_COOLDOWN) return showToast('道具冷却中，稍等几秒');
-      const target = onlineUsers.find(u => u.player_token !== playerToken);
-      if (!target) return showToast('大厅里没有其他人');
-      if (btn.dataset.item) throwItem(target, btn.dataset.item);
-    });
-  });
-
   async function throwItem(target, itemType) {
     const now = Date.now();
     if (now - lastItemTime < ITEM_COOLDOWN) { showToast('冷却中...'); return; }
     lastItemTime = now;
     // 插入数据库（同步给其他人）
     await supabase.from('lobby_items').insert({ from_token: playerToken, to_token: target.player_token, item_type: itemType });
-    // 本地动画
     animateItemFly(target.player_token, itemType);
-    // 冷却 UI
-    itemPalette.querySelectorAll('.item-btn').forEach(b => b.classList.add('cooldown'));
-    setTimeout(() => itemPalette.querySelectorAll('.item-btn').forEach(b => b.classList.remove('cooldown')), ITEM_COOLDOWN);
   }
 
   function animateItemFly(toToken, itemType) {
-    const fromEl = myAvatarSmall;
+    const fromEl = lobbyStage.querySelector(`[data-token="${playerToken}"]`);
     const toEl = lobbyStage.querySelector(`[data-token="${toToken}"]`);
     if (!toEl) return;
     const fromR = fromEl.getBoundingClientRect();
     const toR = toEl.getBoundingClientRect();
-    const emojis = { tomato:'🍅', bomb:'💣', rocket:'🚀', '666':'6️⃣6️⃣6️⃣' };
+    const emojis = { tomato:'🍅', bomb:'💣', rocket:'🚀', '666':'6️⃣6️⃣6️⃣', poop:'💩' };
     const fly = document.createElement('span');
     fly.className = 'item-fly animate';
     fly.textContent = emojis[itemType] || '💥';

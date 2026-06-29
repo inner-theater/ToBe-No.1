@@ -40,10 +40,6 @@
     <div class="lobby-container">
       <!-- 顶部栏 -->
       <header class="lobby-header">
-        <div class="lobby-user-info" id="lobby-my-info">
-          <div class="my-avatar-small" id="my-avatar-small"></div>
-          <span class="my-nickname" id="my-nickname-display"></span>
-        </div>
         <h1 class="lobby-title neon-text">活动大厅</h1>
         <button id="create-room-btn" class="btn btn-small btn-primary">创建房间</button>
       </header>
@@ -71,12 +67,6 @@
       <div class="lobby-bottom">
         <div class="barrage-layer" id="barrage-layer"></div>
         <div class="comment-bar">
-          <div class="item-buttons" id="item-palette">
-            <button class="item-btn" data-item="tomato" title="扔番茄">🍅</button>
-            <button class="item-btn" data-item="bomb" title="扔炸弹">💣</button>
-            <button class="item-btn" data-item="rocket" title="发火箭">🚀</button>
-            <button class="item-btn" data-item="666" title="扣666">6️⃣6️⃣6️⃣</button>
-          </div>
           <input type="text" id="comment-input" class="comment-input" placeholder="发条弹幕..." maxlength="30">
           <button id="comment-send-btn" class="btn btn-small btn-primary">发送</button>
         </div>
@@ -155,6 +145,7 @@
         <button class="item-option" data-item="bomb">💣<br>炸弹</button>
         <button class="item-option" data-item="rocket">🚀<br>火箭</button>
         <button class="item-option" data-item="666">6️⃣6️⃣6️⃣<br>666</button>
+        <button class="item-option" data-item="poop">💩<br>大便</button>
       </div>
       <button class="item-popup-close" id="item-popup-close">取消</button>
     </div>
