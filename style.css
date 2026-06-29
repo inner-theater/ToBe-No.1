@@ -101,6 +101,9 @@ body::before{
 /* 击中目标效果 */
 .hit-effect{ position:absolute; font-size:2rem; pointer-events:none; z-index:101; animation:hitBurst .6s ease-out forwards }
 @keyframes hitBurst{ 0%{ transform:scale(0); opacity:1 } 100%{ transform:scale(2); opacity:0 } }
+/* 头像上方弹幕气泡 */
+.chat-bubble{ position:absolute; background:rgba(30,30,60,.95); border:1px solid var(--neon-cyan); border-radius:12px; padding:6px 12px; font-size:.8rem; color:var(--text-primary); white-space:nowrap; pointer-events:none; z-index:150; animation:bubbleUp 5s ease-out forwards }
+@keyframes bubbleUp{ 0%{ opacity:0; transform:translateY(10px) } 10%{ opacity:1; transform:translateY(0) } 80%{ opacity:1 } 100%{ opacity:0; transform:translateY(-60px) } }
 
 /* 房间面板 */
 .room-panel{ width:200px; flex-shrink:0; background:var(--bg-card); border:1px solid var(--border-color); border-radius:var(--radius-lg); padding:12px; display:flex; flex-direction:column; gap:10px; overflow-y:auto }
@@ -115,9 +118,8 @@ body::before{
 .room-name-input:focus{ border-color:var(--neon-purple) }
 
 /* 弹幕层 */
-.barrage-layer{ height:60px; overflow:hidden; position:relative; margin-bottom:6px }
-.barrage-msg{ position:absolute; white-space:nowrap; font-size:.85rem; font-weight:600; color:var(--neon-cyan); animation:barrageScroll 6s linear forwards; pointer-events:none }
-@keyframes barrageScroll{ from{ left:100% } to{ left:-100% } }
+.barrage-layer{ display:none }
+.barrage-msg{ display:none }
 .comment-bar{ display:flex; gap:8px; align-items:center; flex-shrink:0; padding-bottom:8px }
 .item-buttons{ display:flex; gap:4px }
 .item-btn{ width:32px; height:32px; font-size:1rem; border-radius:50%; border:1px solid var(--border-color); background:var(--bg-card); cursor:pointer; display:flex; align-items:center; justify-content:center; transition:var(--transition) }
@@ -133,8 +135,8 @@ body::before{
 .item-popup-title{ font-size:1rem; margin-bottom:16px; color:var(--text-primary) }
 .item-popup-title span{ color:var(--neon-cyan); font-weight:800 }
 .item-popup-options{ display:flex; gap:12px; justify-content:center; margin-bottom:16px }
-.item-option{ background:var(--bg-input); border:1px solid var(--border-color); border-radius:var(--radius); color:var(--text-primary); padding:10px 14px; font-size:.85rem; cursor:pointer; transition:var(--transition) }
-.item-option:hover{ border-color:var(--neon-purple); transform:scale(1.05); box-shadow:0 0 12px rgba(168,85,247,.3) }
+.item-option{ background:var(--bg-input); border:1px solid var(--border-color); border-radius:var(--radius); color:var(--text-primary); padding:10px 14px; font-size:1.3rem; cursor:pointer; transition:var(--transition); min-width:44px }
+.item-option:hover{ border-color:var(--neon-purple); transform:scale(1.1); box-shadow:0 0 12px rgba(168,85,247,.3) }
 .item-popup-close{ background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:.85rem }
 .history-modal-content{ background:var(--bg-card); border:1px solid var(--neon-cyan); border-radius:var(--radius-lg); padding:24px; max-width:500px; width:90vw; max-height:70vh; overflow-y:auto }
 .history-list{ display:flex; flex-direction:column; gap:8px }

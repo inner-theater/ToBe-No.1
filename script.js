@@ -32,7 +32,6 @@
   const roomCreateForm   = $('#room-create-form');
   const roomNameInput    = $('#room-name-input');
   const roomCreateConfirm = $('#room-create-confirm');
-  const barrageLayer     = $('#barrage-layer');
   const commentInput     = $('#comment-input');
   const commentSendBtn   = $('#comment-send-btn');
   const itemPopup        = $('#item-popup');
@@ -624,19 +623,19 @@
     });
   });
 
-  async function throwItem(target, itemType) {
+  function throwItem(target, itemType) {
     const now = Date.now();
     if (now - lastItemTime < ITEM_COOLDOWN) { showToast('冷却中...'); return; }
     lastItemTime = now;
-    // 插入数据库（同步给其他人）
-    await supabase.from('lobby_items').insert({ from_token: playerToken, to_token: target.player_token, item_type: itemType });
+    // Broadcast 广播（不存库）
+    lobbyChannel.send({ type: 'broadcast', event: 'item_thrown', payload: { from_token: playerToken, to_token: target.player_token, item_type: itemType } });
     animateItemFly(target.player_token, itemType);
   }
 
   function animateItemFly(toToken, itemType) {
     const fromEl = lobbyStage.querySelector(`[data-token="${playerToken}"]`);
     const toEl = lobbyStage.querySelector(`[data-token="${toToken}"]`);
-    if (!toEl) return;
+    if (!fromEl || !toEl) return;
     const fromR = fromEl.getBoundingClientRect();
     const toR = toEl.getBoundingClientRect();
     const emojis = { tomato:'🍅', bomb:'💣', rocket:'🚀', '666':'6️⃣6️⃣6️⃣', poop:'💩' };
@@ -650,7 +649,6 @@
     document.body.appendChild(fly);
     setTimeout(() => {
       fly.remove();
-      // 命中效果
       const hit = document.createElement('span');
       hit.className = 'hit-effect';
       hit.textContent = emojis[itemType] || '💥';
@@ -661,42 +659,40 @@
     }, 1000);
   }
 
-  // 弹幕
+  // 弹幕（Broadcast 广播，不存库）
   commentSendBtn.addEventListener('click', sendComment);
   commentInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendComment(); });
 
-  async function sendComment() {
+  function sendComment() {
     const msg = commentInput.value.trim();
     if (!msg) return;
     commentInput.value = '';
-    await supabase.from('lobby_comments').insert({ from_token: playerToken, comment: msg });
-    showBarrageMsg(myProfile.nickname, msg);
+    lobbyChannel.send({ type: 'broadcast', event: 'barrage', payload: { from_token: playerToken, comment: msg } });
+    showBubble(playerToken, myProfile.nickname, msg);
   }
 
-  function showBarrageMsg(nick, msg) {
-    const el = document.createElement('span');
-    el.className = 'barrage-msg';
-    el.textContent = `${nick}: ${msg}`;
-    const top = Math.random() * 30 + 'px';
-    el.style.top = top;
-    const colors = ['var(--neon-cyan)','var(--neon-purple)','var(--neon-pink)','var(--gold)'];
-    el.style.color = colors[Math.floor(Math.random()*colors.length)];
-    barrageLayer.appendChild(el);
-    setTimeout(() => el.remove(), 6000);
+  function showBubble(token, nick, msg) {
+    const avatar = lobbyStage.querySelector(`[data-token="${token}"]`);
+    if (!avatar) return;
+    const bubble = document.createElement('div');
+    bubble.className = 'chat-bubble';
+    bubble.textContent = `${nick}: ${msg}`;
+    avatar.appendChild(bubble);
+    setTimeout(() => bubble.remove(), 5000);
   }
 
   // ===================== Realtime =====================
   function setupLobbyRealtime() {
     if (lobbyChannel) supabase.removeChannel(lobbyChannel);
     lobbyChannel = supabase.channel('lobby')
-      .on('postgres_changes', { event:'*', schema:'public', table:'lobby_items' }, payload => {
-        if (payload.eventType === 'INSERT' && payload.new.from_token !== playerToken) {
-          animateItemFly(payload.new.from_token, payload.new.item_type);
+      .on('broadcast', { event: 'item_thrown' }, payload => {
+        if (payload.payload.from_token !== playerToken) {
+          animateItemFly(payload.payload.from_token, payload.payload.item_type);
         }
       })
-      .on('postgres_changes', { event:'INSERT', schema:'public', table:'lobby_comments' }, payload => {
-        const u = onlineUsers.find(x => x.player_token === payload.new.from_token);
-        if (u) showBarrageMsg(u.nickname, payload.new.comment);
+      .on('broadcast', { event: 'barrage' }, payload => {
+        const u = onlineUsers.find(x => x.player_token === payload.payload.from_token);
+        if (u) showBubble(payload.payload.from_token, u.nickname, payload.payload.comment);
       })
       .subscribe();
   }
