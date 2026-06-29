@@ -851,7 +851,7 @@
     lastItemTime = now;
     // Broadcast 广播（不存库）
     lobbyChannel.send({ type: 'broadcast', event: 'item_thrown', payload: { from_token: playerToken, to_token: target.player_token, item_type: itemType } });
-    animateItemFly(target.player_token, itemType);
+    animateItemFly(playerToken, target.player_token, itemType);
   }
 
   // 道具效果映射：{ cssClass, pushStrength, duration }
@@ -866,8 +866,8 @@
     poop:    { cls:'avatar-hit-brown',  push:6,  dur:2000, emoji:'💩' },
   };
 
-  function animateItemFly(toToken, itemType) {
-    const fromEl = lobbyStage.querySelector(`[data-token="${playerToken}"]`);
+  function animateItemFly(fromToken, toToken, itemType) {
+    const fromEl = lobbyStage.querySelector(`[data-token="${fromToken}"]`);
     const toEl = lobbyStage.querySelector(`[data-token="${toToken}"]`);
     if (!fromEl || !toEl) return;
     const eff = ITEM_EFFECTS[itemType] || ITEM_EFFECTS.tomato;
@@ -954,7 +954,7 @@
       })
       .on('broadcast', { event: 'item_thrown' }, payload => {
         if (payload.payload.from_token !== playerToken) {
-          animateItemFly(payload.payload.from_token, payload.payload.item_type);
+          animateItemFly(payload.payload.from_token, payload.payload.to_token, payload.payload.item_type);
         }
       })
       .on('broadcast', { event: 'barrage' }, payload => {
