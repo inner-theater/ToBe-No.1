@@ -590,12 +590,17 @@
 
   function renderPlayerListUI() {
     if (allPlayers.length === 0) {
+      if (playerListEl.querySelector('.empty-hint')) return; // 没变化
       playerListEl.innerHTML = '<p class="empty-hint">虚位以待...</p>';
       return;
     }
-    playerListEl.innerHTML = allPlayers.map(p =>
+    const newHTML = allPlayers.map(p =>
       `<span class="player-tag${p.is_owner ? ' owner-tag' : ''}">${p.is_owner ? '👑 ' : '⚔️ '}${escapeHTML(p.name)}</span>`
     ).join('');
+    // 只有内容真正变化才更新 DOM，避免闪烁
+    if (playerListEl.innerHTML !== newHTML) {
+      playerListEl.innerHTML = newHTML;
+    }
   }
 
   leaveRoomBtn.addEventListener('click', async () => {
