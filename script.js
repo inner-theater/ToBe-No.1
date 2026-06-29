@@ -296,6 +296,9 @@
       // 解锁加入表单
       unlockJoinForm();
 
+      // 重新开始轮询
+      startPolling();
+
       return true;
     } catch (err) {
       console.error('重置失败:', err);
@@ -305,6 +308,68 @@
   }
 
   // ===================== 实时同步 =====================
+
+  let pollInterval = null; // 轮询定时器（Realtime 不可用时的后备方案）
+
+  /** 启动轮询（后备方案） */
+  function startPolling() {
+    if (pollInterval) return;
+    pollInterval = setInterval(async function () {
+      try {
+        const fresh = await supabase
+          .from('players')
+          .select('*')
+          .eq('room_id', roomId)
+          .order('created_at', { ascending: true });
+        if (fresh.error) return;
+        const newData = fresh.data || [];
+
+        // 检测变化
+        const oldLen = allPlayers.length;
+        const newLen = newData.length;
+        const hasChanges = oldLen !== newLen || newData.some(function (np) {
+          const op = allPlayers.find(function (p) { return p.id === np.id; });
+          if (!op) return true;
+          return op.game_started !== np.game_started || op.is_finished !== np.is_finished;
+        });
+
+        if (hasChanges) {
+          allPlayers = newData;
+          if (waitingView.classList.contains('active')) {
+            renderPlayerList();
+            // 检查是否需要显示房主按钮
+            const self = allPlayers.find(function (p) { return p.player_token === playerToken; });
+            if (self && self.is_owner && !isOwner) {
+              isOwner = true;
+              playerRecord = self;
+              ownerActions.style.display = 'block';
+            }
+          }
+          // 检测游戏开始
+          const started = newData.some(function (p) { return p.game_started; });
+          if (started && !gameActive && !gameFinished && playerRecord && !playerRecord.is_finished) {
+            gameActive = true;
+            enterGamePhase();
+          }
+          // 检测所有人完成
+          const allDone = newData.length > 0 && newData.every(function (p) { return p.is_finished; });
+          if (allDone && gameFinished) {
+            showResults();
+          }
+        }
+      } catch (e) {
+        // 静默处理
+      }
+    }, 2000);
+  }
+
+  /** 停止轮询 */
+  function stopPolling() {
+    if (pollInterval) {
+      clearInterval(pollInterval);
+      pollInterval = null;
+    }
+  }
 
   /** 设置 Supabase Realtime 订阅 */
   function setupRealtime() {
@@ -507,6 +572,7 @@
 
   /** 进入游戏阶段 */
   function enterGamePhase() {
+    stopPolling();
     switchView('game');
 
     // 显示预备倒计时
@@ -742,6 +808,7 @@
 
   /** 显示结果页 */
   function showResults() {
+    stopPolling();
     // 最终次获取数据确保完整
     fetchPlayers().then(function () {
       // 过滤掉未完成的 player（如果超时进入）
@@ -893,6 +960,9 @@
     // 建立实时连接
     setupRealtime();
 
+    // 开启轮询后备（确保 Realtime 未配置时也能同步）
+    startPolling();
+
     // 获取当前房间数据
     const players = await fetchPlayers();
     renderPlayerList();
@@ -977,6 +1047,7 @@
 
   // 页面卸载时清理
   window.addEventListener('beforeunload', function () {
+    stopPolling();
     if (realtimeChannel) {
       supabase.removeChannel(realtimeChannel);
     }
