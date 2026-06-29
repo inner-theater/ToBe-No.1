@@ -541,9 +541,12 @@
   // 进入等待室
   function enterWaitingRoom(room) {
     stopAllIntervals();
-    if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null; } // 停止心跳，从大厅消失
-    // 设置 DB 离线（让还在用旧逻辑的客户端也能看到）
+    if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null; }
     supabase.from('users').update({ is_online: false }).eq('player_token', playerToken).then(()=>{}).catch(()=>{});
+    // 持久化房间状态（刷新后能恢复）
+    localStorage.setItem('active_room_id', room.id);
+    localStorage.setItem('active_room_name', room.name);
+    localStorage.setItem('active_room_owner', isRoomOwner ? '1' : '0');
     currentRoom = room;
     roomId = room.id;
     switchView('waiting');
@@ -588,19 +591,20 @@
     }
   }
 
+  let lastPlayerNames = ''; // 避免 DOM 闪烁
+
   function renderPlayerListUI() {
     if (allPlayers.length === 0) {
-      if (playerListEl.querySelector('.empty-hint')) return; // 没变化
       playerListEl.innerHTML = '<p class="empty-hint">虚位以待...</p>';
+      lastPlayerNames = '';
       return;
     }
-    const newHTML = allPlayers.map(p =>
+    const names = allPlayers.map(p => p.name).sort().join(',');
+    if (names === lastPlayerNames) return;
+    lastPlayerNames = names;
+    playerListEl.innerHTML = allPlayers.map(p =>
       `<span class="player-tag${p.is_owner ? ' owner-tag' : ''}">${p.is_owner ? '👑 ' : '⚔️ '}${escapeHTML(p.name)}</span>`
     ).join('');
-    // 只有内容真正变化才更新 DOM，避免闪烁
-    if (playerListEl.innerHTML !== newHTML) {
-      playerListEl.innerHTML = newHTML;
-    }
   }
 
   leaveRoomBtn.addEventListener('click', async () => {
@@ -616,6 +620,9 @@
     }
     stopAllIntervals();
     currentRoom = null; isRoomOwner = false; roomId = null; allPlayers = [];
+    localStorage.removeItem('active_room_id');
+    localStorage.removeItem('active_room_name');
+    localStorage.removeItem('active_room_owner');
     enterLobby();
   });
 
@@ -782,6 +789,9 @@
 
   backToLobbyBtn.addEventListener('click', () => {
     stopAllIntervals();
+    localStorage.removeItem('active_room_id');
+    localStorage.removeItem('active_room_name');
+    localStorage.removeItem('active_room_owner');
     enterLobby();
   });
 
@@ -999,25 +1009,35 @@
     const savedAvatar = localStorage.getItem('profile_avatar');
 
     if (savedNick) {
-      // 有保存的昵称 → 以它为唯一标识更新 token，直接进大厅
-      const { data: exist } = await supabase.from('users').select('*').eq('nickname', savedNick).limit(1);
-      if (exist && exist.length > 0) {
-        // 加载最新头像
-        myProfile = { nickname: savedNick, avatar_b64: exist[0].avatar_b64 || savedAvatar || '' };
-        await supabase.from('users').update({
-          player_token: playerToken, is_online: true, last_seen: new Date().toISOString()
-        }).eq('nickname', savedNick);
-        localStorage.setItem('profile_avatar', myProfile.avatar_b64);
-        enterLobby();
-      } else {
-        // DB 里没这条记录了，重新插入
-        myProfile = { nickname: savedNick, avatar_b64: savedAvatar || '' };
-        await supabase.from('users').insert({
-          nickname: savedNick, avatar_b64: savedAvatar || '',
-          player_token: playerToken, is_online: true, last_seen: new Date().toISOString()
-        });
-        enterLobby();
+      myProfile = { nickname: savedNick, avatar_b64: savedAvatar || '' };
+      // 检查是否有未退出的房间
+      const savedRoomId = localStorage.getItem('active_room_id');
+      const savedRoomName = localStorage.getItem('active_room_name');
+      const savedRoomOwner = localStorage.getItem('active_room_owner');
+      if (savedRoomId && savedRoomName) {
+        // 恢复房间状态
+        const { data: room } = await supabase.from('rooms').select('*').eq('id', savedRoomId).single();
+        if (room && room.is_active) {
+          currentRoom = room;
+          roomId = room.id;
+          isRoomOwner = savedRoomOwner === '1';
+          // 确保成员记录存在
+          const { data: member } = await supabase.from('room_members').select('*').eq('room_id', roomId).eq('user_token', playerToken);
+          if (!member || member.length === 0) {
+            await supabase.from('room_members').insert({ room_id: roomId, user_token: playerToken, is_owner: isRoomOwner });
+          }
+          // 在线
+          await supabase.from('users').update({ player_token: playerToken, is_online: true, last_seen: new Date().toISOString() }).eq('nickname', savedNick);
+          enterWaitingRoom(room);
+          return;
+        }
+        // 房间已不存在
+        localStorage.removeItem('active_room_id');
+        localStorage.removeItem('active_room_name');
+        localStorage.removeItem('active_room_owner');
       }
+      // 没有活跃房间 → 正常进大厅
+      enterLobby();
     } else {
       switchView('profile');
     }
