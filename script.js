@@ -542,7 +542,7 @@
   }
 
   // 进入等待室
-  function enterWaitingRoom(room) {
+  async function enterWaitingRoom(room) {
     stopAllIntervals();
     if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null; }
     supabase.from('users').update({ is_online: false }).eq('player_token', playerToken).then(()=>{}).catch(()=>{});
