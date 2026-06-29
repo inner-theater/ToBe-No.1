@@ -29,6 +29,7 @@
   const lobbyStage       = $('#lobby-stage');
   const roomList         = $('#room-list');
   const createRoomBtn    = $('#create-room-btn');
+  const logoutBtn        = $('#logout-btn');
   const roomCreateForm   = $('#room-create-form');
   const roomNameInput    = $('#room-name-input');
   const roomCreateConfirm = $('#room-create-confirm');
@@ -137,6 +138,7 @@
 
   // ===================== 个人资料 =====================
   let avatarBase64 = '';
+  const avatarSection = $('#avatar-section');
 
   avatarPreview.addEventListener('click', () => avatarInput.click());
 
@@ -145,6 +147,7 @@
     if (!file) return;
     avatarBase64 = await compressAvatar(file);
     avatarPreview.innerHTML = `<img src="${avatarBase64}" alt="avatar">`;
+    checkProfileReady();
   });
 
   function compressAvatar(file) {
@@ -172,42 +175,65 @@
   nicknameInput.addEventListener('input', () => {
     const len = nicknameInput.value.length;
     nicknameCount.textContent = len;
-    profileSaveBtn.disabled = len === 0;
+    checkProfileReady();
   });
 
+  function checkProfileReady() {
+    const nick = nicknameInput.value.trim();
+    profileSaveBtn.disabled = nick.length === 0;
+  }
+
+  // 登录（查找已有账号）
   profileSaveBtn.addEventListener('click', async () => {
     const nick = nicknameInput.value.trim();
-    if (!nick) return showToast('请输入昵称');
+    if (!nick) return;
     profileSaveBtn.disabled = true;
-    profileSaveBtn.textContent = '保存中...';
+    profileSaveBtn.textContent = '登录中...';
 
-    // 检查昵称唯一
-    const { data: exist } = await supabase.from('users').select('id').eq('nickname', nick).neq('player_token', playerToken).limit(1);
+    // 先查 DB 是否有这个昵称
+    const { data: exist } = await supabase.from('users').select('*').eq('nickname', nick).limit(1);
+
     if (exist && exist.length > 0) {
-      showToast('这名号被人占了，换一个！');
-      profileSaveBtn.disabled = false;
-      profileSaveBtn.textContent = '进入大厅';
+      // 已有用户 → 加载资料直接进
+      const user = exist[0];
+      myProfile = { nickname: user.nickname, avatar_b64: user.avatar_b64 || '' };
+      // 更新 token 和在线状态
+      await supabase.from('users').update({
+        player_token: playerToken,
+        avatar_b64: user.avatar_b64 || '',
+        is_online: true,
+        last_seen: new Date().toISOString()
+      }).eq('id', user.id).eq('nickname', user.nickname);
+      localStorage.setItem('profile_nickname', user.nickname);
+      localStorage.setItem('profile_avatar', user.avatar_b64 || '');
+      enterLobby();
       return;
     }
 
-    // Upsert
-    const { data, error } = await supabase.from('users').upsert({
-      nickname: nick,
-      avatar_b64: avatarBase64,
-      player_token: playerToken,
-      is_online: true,
+    // 新用户 → 需要头像
+    if (avatarSection.style.display === 'none') {
+      avatarSection.style.display = 'block';
+      profileSaveBtn.textContent = '上传头像后进入';
+      profileSaveBtn.disabled = !avatarBase64;
+      return;
+    }
+
+    if (!avatarBase64) {
+      showToast('请上传头像');
+      profileSaveBtn.textContent = '进入大厅';
+      profileSaveBtn.disabled = false;
+      return;
+    }
+
+    // 创建新用户
+    const { error } = await supabase.from('users').insert({
+      nickname: nick, avatar_b64: avatarBase64,
+      player_token: playerToken, is_online: true,
       last_seen: new Date().toISOString()
-    }, { onConflict: 'player_token' }).select().single();
-
-    if (error) {
-      showToast('保存失败，重试一下');
-      profileSaveBtn.disabled = false;
-      profileSaveBtn.textContent = '进入大厅';
-      return;
-    }
+    });
+    if (error) { showToast('创建失败'); profileSaveBtn.disabled = false; profileSaveBtn.textContent = '进入大厅'; return; }
 
     myProfile = { nickname: nick, avatar_b64: avatarBase64 };
-    myUserRecord = data;
     localStorage.setItem('profile_nickname', nick);
     localStorage.setItem('profile_avatar', avatarBase64);
     enterLobby();
@@ -218,8 +244,11 @@
     stopAllIntervals();
     switchView('lobby');
 
-    // 标记在线
+    // 标记在线 + 心跳
     await supabase.from('users').update({ is_online: true, last_seen: new Date().toISOString() }).eq('player_token', playerToken);
+    let heartbeat = setInterval(() => {
+      supabase.from('users').update({ last_seen: new Date().toISOString() }).eq('player_token', playerToken);
+    }, 30000);
 
     // 加载数据
     await Promise.all([fetchOnlineUsers(), fetchLobbyRooms()]);
@@ -228,14 +257,36 @@
 
     // 启动实时 & 轮询
     setupLobbyRealtime();
-    lobbyUsersInterval = setInterval(() => {
+    lobbyUsersInterval = setInterval(async () => {
+      // 清理超过 60 秒未心跳的用户
+      const cutoff = new Date(Date.now() - 60000).toISOString();
+      await supabase.from('users').update({ is_online: false }).lt('last_seen', cutoff).eq('is_online', true);
       fetchOnlineUsers().then(() => renderLobbyUsers());
       fetchLobbyRooms().then(() => renderLobbyRooms());
     }, 5000);
+
+    // 退出
+    logoutBtn.onclick = async () => {
+      await supabase.from('users').update({ is_online: false }).eq('player_token', playerToken);
+      clearInterval(heartbeat);
+      stopAllIntervals();
+      myProfile = null;
+      localStorage.removeItem('profile_nickname');
+      localStorage.removeItem('profile_avatar');
+      switchView('profile');
+      avatarSection.style.display = 'block';
+      avatarBase64 = '';
+      avatarPreview.innerHTML = '<span class="avatar-placeholder">+</span>';
+      nicknameInput.value = '';
+      profileSaveBtn.textContent = '进入大厅';
+      profileSaveBtn.disabled = true;
+    };
   }
 
   async function fetchOnlineUsers() {
-    const { data } = await supabase.from('users').select('*').eq('is_online', true).order('nickname');
+    // 过滤掉离线超过 60 秒的
+    const cutoff = new Date(Date.now() - 60000).toISOString();
+    const { data } = await supabase.from('users').select('*').eq('is_online', true).gte('last_seen', cutoff).order('nickname');
     onlineUsers = data || [];
     return onlineUsers;
   }
@@ -734,13 +785,25 @@
     const savedAvatar = localStorage.getItem('profile_avatar');
 
     if (savedNick) {
-      myProfile = { nickname: savedNick, avatar_b64: savedAvatar || '' };
-      // 同步到数据库
-      await supabase.from('users').upsert({
-        nickname: savedNick, avatar_b64: savedAvatar || '',
-        player_token: playerToken, is_online: true, last_seen: new Date().toISOString()
-      }, { onConflict: 'player_token' });
-      enterLobby();
+      // 有保存的昵称 → 以它为唯一标识更新 token，直接进大厅
+      const { data: exist } = await supabase.from('users').select('*').eq('nickname', savedNick).limit(1);
+      if (exist && exist.length > 0) {
+        // 加载最新头像
+        myProfile = { nickname: savedNick, avatar_b64: exist[0].avatar_b64 || savedAvatar || '' };
+        await supabase.from('users').update({
+          player_token: playerToken, is_online: true, last_seen: new Date().toISOString()
+        }).eq('nickname', savedNick);
+        localStorage.setItem('profile_avatar', myProfile.avatar_b64);
+        enterLobby();
+      } else {
+        // DB 里没这条记录了（可能被清过），也进大厅让它重建
+        myProfile = { nickname: savedNick, avatar_b64: savedAvatar || '' };
+        await supabase.from('users').upsert({
+          nickname: savedNick, avatar_b64: savedAvatar || '',
+          player_token: playerToken, is_online: true, last_seen: new Date().toISOString()
+        }, { onConflict: 'nickname' });
+        enterLobby();
+      }
     } else {
       switchView('profile');
     }

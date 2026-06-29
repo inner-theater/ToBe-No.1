@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
   created_at   TIMESTAMPTZ DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_users_token ON users(player_token);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_nickname ON users(nickname);
 
 -- ============================================================
 -- 2. 房间表
