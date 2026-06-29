@@ -418,15 +418,22 @@
   function renderLobbyUsers() {
     const stageW = lobbyStage.clientWidth || 500;
     const stageH = lobbyStage.clientHeight || 300;
+    // 去重 + 只保留有 info 的用户
+    const uniqueUsers = [];
+    const seen = new Set();
+    onlineUsers.forEach(u => {
+      if (!seen.has(u.player_token)) { seen.add(u.player_token); uniqueUsers.push(u); }
+    });
+    onlineUsers = uniqueUsers;
     const currentTokens = new Set(onlineUsers.map(u => u.player_token));
 
-    // 移除下线的
+    // 移除下线的（检查 DOM 是否还存在）
     Object.keys(physicsUsers).forEach(token => {
       if (!currentTokens.has(token)) {
         const u = physicsUsers[token];
-        const nick = u && u.el ? u.el.querySelector('.avatar-nick').textContent : '?';
+        const nick = u && u.el ? (u.el.querySelector('.avatar-nick')||{}).textContent || '?' : '?';
         log('渲染','移除用户', nick);
-        physicsUsers[token].el.remove();
+        if (u && u.el && u.el.parentNode) u.el.remove();
         delete physicsUsers[token];
       }
     });
@@ -434,6 +441,12 @@
     // 添加 / 更新
     onlineUsers.forEach(user => {
       const isSelf = user.player_token === playerToken;
+      // 双重检查：physicsUsers 和 DOM
+      const domExists = lobbyStage.querySelector(`[data-token="${user.player_token}"]`);
+      if (domExists && !physicsUsers[user.player_token]) {
+        // DOM 有但 physics 没追踪 → 清除旧 DOM
+        domExists.remove();
+      }
       if (!physicsUsers[user.player_token]) {
         log('物理','新增用户', user.nickname);
         const div = document.createElement('div');
