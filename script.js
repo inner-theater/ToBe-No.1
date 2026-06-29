@@ -123,6 +123,30 @@
     if (viewName === 'result')   resultView.classList.add('active');
   }
 
+  /** 锁定加入表单（已加入状态） */
+  function lockJoinForm(name) {
+    nameInput.disabled = true;
+    nameInput.value = name;
+    nameInput.style.opacity = '0.6';
+    nameInput.style.borderColor = 'var(--neon-purple)';
+    nameInput.style.boxShadow = '0 0 8px rgba(168,85,247,0.3)';
+    joinBtn.disabled = true;
+    joinBtn.textContent = '✅ 已就位';
+    joinBtn.style.opacity = '0.7';
+  }
+
+  /** 解除加入表单锁定 */
+  function unlockJoinForm() {
+    nameInput.disabled = false;
+    nameInput.value = '';
+    nameInput.style.opacity = '1';
+    nameInput.style.borderColor = 'var(--border-color)';
+    nameInput.style.boxShadow = 'none';
+    joinBtn.disabled = false;
+    joinBtn.textContent = '加入战场';
+    joinBtn.style.opacity = '1';
+  }
+
   // ===================== Supabase 操作 =====================
 
   /** 获取房间所有玩家 */
@@ -268,6 +292,9 @@
       countdownLabel.style.display = 'block';
       countdownDisplay.textContent = '10';
       countdownDisplay.className = 'countdown-display';
+
+      // 解锁加入表单
+      unlockJoinForm();
 
       return true;
     } catch (err) {
@@ -735,6 +762,12 @@
 
   /** 加入按钮点击 */
   joinBtn.addEventListener('click', async function () {
+    // 已经加入过：拒绝
+    if (playerRecord) {
+      showToast('你已经加入战场了！', 'error');
+      return;
+    }
+
     const name = nameInput.value.trim();
 
     if (!name) {
@@ -778,8 +811,8 @@
         renderPlayerList();
       }
 
-      nameInput.value = '';
-      nameInput.disabled = false;
+      // 加入成功 → 锁定表单，显示已就位
+      lockJoinForm(playerName);
       setBtnLoading(joinBtn, false);
     } else {
       nameInput.disabled = false;
@@ -917,6 +950,9 @@
         if (started) {
           gameActive = true;
           enterGamePhase();
+        } else {
+          // 已加入，等待房主开始 → 锁定表单
+          lockJoinForm(self.name);
         }
       }
     }
