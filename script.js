@@ -370,9 +370,6 @@
         if (p.x > stageW - avatarW) { p.x = stageW - avatarW; p.vx = -Math.abs(p.vx) * 0.9; }
         if (p.y < 0) { p.y = 0; p.vy = Math.abs(p.vy) * 0.9; }
         if (p.y > stageH - avatarH) { p.y = stageH - avatarH; p.vy = -Math.abs(p.vy) * 0.9; }
-        // 减速摩擦
-        p.vx *= 0.999;
-        p.vy *= 0.999;
       }
 
       for (let i = 0; i < tokens.length; i++) {
@@ -461,8 +458,8 @@
           el: div,
           x: 20 + Math.random() * (stageW - 80),
           y: 20 + Math.random() * (stageH - 100),
-          vx: (Math.random() - 0.5) * 1.5,
-          vy: (Math.random() - 0.5) * 1.5
+          vx: (Math.random() - 0.5) * 4,
+          vy: (Math.random() - 0.5) * 4
         };
       } else {
         physicsUsers[user.player_token].el.querySelector('.avatar-nick').textContent = user.nickname;
@@ -544,6 +541,9 @@
   // 进入等待室
   function enterWaitingRoom(room) {
     stopAllIntervals();
+    if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null; } // 停止心跳，从大厅消失
+    // 设置 DB 离线（让还在用旧逻辑的客户端也能看到）
+    supabase.from('users').update({ is_online: false }).eq('player_token', playerToken).then(()=>{}).catch(()=>{});
     currentRoom = room;
     roomId = room.id;
     switchView('waiting');
