@@ -101,16 +101,10 @@ CREATE TABLE IF NOT EXISTS game_history (
 CREATE INDEX IF NOT EXISTS idx_gh_room ON game_history(room_id);
 
 -- ============================================================
--- 8. RLS 策略
+-- 8. RLS 策略（幂等，可安全重复执行）
 -- ============================================================
-ALTER TABLE users          ENABLE ROW LEVEL SECURITY;
-ALTER TABLE rooms          ENABLE ROW LEVEL SECURITY;
-ALTER TABLE room_members   ENABLE ROW LEVEL SECURITY;
-ALTER TABLE lobby_items    ENABLE ROW LEVEL SECURITY;
-ALTER TABLE lobby_comments ENABLE ROW LEVEL SECURITY;
-ALTER TABLE game_history   ENABLE ROW LEVEL SECURITY;
 
--- 公开读取 & 写入（内部工具，依赖应用层安全校验）
+-- 公开读取 & 写入（幂等，可重复执行）
 DO $$
 DECLARE
   tbl TEXT;
@@ -118,7 +112,14 @@ BEGIN
   FOR tbl IN
     SELECT unnest(ARRAY['users','rooms','room_members','lobby_items','lobby_comments','players','game_history'])
   LOOP
+    BEGIN
+      EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', tbl);
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
     EXECUTE format('DROP POLICY IF EXISTS "public_access" ON %I', tbl);
+    EXECUTE format('DROP POLICY IF EXISTS "public_insert" ON %I', tbl);
+    EXECUTE format('DROP POLICY IF EXISTS "public_update" ON %I', tbl);
+    EXECUTE format('DROP POLICY IF EXISTS "public_delete" ON %I', tbl);
     EXECUTE format('CREATE POLICY "public_access" ON %I FOR SELECT USING (true)', tbl);
     EXECUTE format('CREATE POLICY "public_insert" ON %I FOR INSERT WITH CHECK (true)', tbl);
     EXECUTE format('CREATE POLICY "public_update" ON %I FOR UPDATE USING (true) WITH CHECK (true)', tbl);
