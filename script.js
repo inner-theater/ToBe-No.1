@@ -253,9 +253,20 @@
     physicsRAF = null; physicsUsers = {};
     onlineUsers = []; // 清空在线列表
 
-    // 广播自己的存在（不依赖 DB）
+    // 先启动 Realtime（channel 必须先于 broadcast 创建）
+    setupLobbyRealtime();
+
+    // 重置在线记录
+    presenceMap = {};
+    presenceUserInfo = {};
+    presenceMap[playerToken] = Date.now();
+    presenceUserInfo[playerToken] = { nickname: myProfile.nickname, avatar_b64: myProfile.avatar_b64 };
+    onlineUsers = [{ player_token: playerToken, nickname: myProfile.nickname, avatar_b64: myProfile.avatar_b64 }];
+    renderLobbyUsers();
+
+    // 广播自己的存在
     function broadcastPresence() {
-      if (!myProfile) return;
+      if (!myProfile || !lobbyChannel) return;
       lobbyChannel.send({
         type: 'broadcast', event: 'presence',
         payload: { from_token: playerToken, nickname: myProfile.nickname, avatar_b64: myProfile.avatar_b64 }
@@ -264,21 +275,10 @@
     broadcastPresence();
     heartbeatInterval = setInterval(broadcastPresence, 5000);
 
-    // 重置在线记录
-    presenceMap = {};
-    presenceUserInfo = {};
-    presenceMap[playerToken] = Date.now();
-    presenceUserInfo[playerToken] = { nickname: myProfile.nickname, avatar_b64: myProfile.avatar_b64 };
-    // 第一次立即显示自己
-    onlineUsers = [{ player_token: playerToken, nickname: myProfile.nickname, avatar_b64: myProfile.avatar_b64 }];
-    renderLobbyUsers();
-
-    // 加载房间
+    // 加载房间 + 轮询
     await fetchLobbyRooms();
     renderLobbyRooms();
 
-    // 启动实时 & 轮询房间
-    setupLobbyRealtime();
     lobbyUsersInterval = setInterval(() => {
       // 清理超时用户（15 秒无心跳）
       const now = Date.now();
