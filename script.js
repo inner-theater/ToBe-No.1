@@ -7,7 +7,7 @@
   // ===================== 常量 =====================
   const COUNTDOWN_SECONDS = 10;
   const COUNTDOWN_PREP = 3;
-  const ITEM_COOLDOWN = 15000; // 15 秒道具冷却
+  const ITEM_COOLDOWN = 1500; // 动画播完即冷却
 
   // ===================== DOM =====================
   const $ = s => document.querySelector(s);
@@ -638,7 +638,7 @@
     if (!fromEl || !toEl) return;
     const fromR = fromEl.getBoundingClientRect();
     const toR = toEl.getBoundingClientRect();
-    const emojis = { tomato:'🍅', bomb:'💣', rocket:'🚀', '666':'6️⃣6️⃣6️⃣', poop:'💩' };
+    const emojis = { tomato:'🍅', egg:'🥚', broccoli:'🥦', drumstick:'🍗', bomb:'💣', rocket:'🚀', '666':'6️⃣6️⃣6️⃣', poop:'💩' };
     const fly = document.createElement('span');
     fly.className = 'item-fly animate';
     fly.textContent = emojis[itemType] || '💥';

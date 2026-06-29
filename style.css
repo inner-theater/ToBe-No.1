@@ -134,7 +134,7 @@ body::before{
 .item-popup-content{ background:var(--bg-card); border:1px solid var(--neon-purple); border-radius:var(--radius-lg); padding:24px; text-align:center; min-width:260px }
 .item-popup-title{ font-size:1rem; margin-bottom:16px; color:var(--text-primary) }
 .item-popup-title span{ color:var(--neon-cyan); font-weight:800 }
-.item-popup-options{ display:flex; gap:12px; justify-content:center; margin-bottom:16px }
+.item-popup-options{ display:flex; gap:8px; justify-content:center; flex-wrap:wrap; margin-bottom:16px; max-width:280px }
 .item-option{ background:var(--bg-input); border:1px solid var(--border-color); border-radius:var(--radius); color:var(--text-primary); padding:10px 14px; font-size:1.3rem; cursor:pointer; transition:var(--transition); min-width:44px }
 .item-option:hover{ border-color:var(--neon-purple); transform:scale(1.1); box-shadow:0 0 12px rgba(168,85,247,.3) }
 .item-popup-close{ background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:.85rem }
