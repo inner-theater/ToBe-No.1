@@ -79,7 +79,8 @@ CREATE TABLE IF NOT EXISTS players (
   is_finished   BOOLEAN DEFAULT false,
   is_owner      BOOLEAN DEFAULT false,
   game_started  BOOLEAN DEFAULT false,
-  created_at    TIMESTAMPTZ DEFAULT now()
+  created_at    TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(player_token, room_id)
 );
 CREATE INDEX IF NOT EXISTS idx_players_room_id ON players(room_id);
 CREATE INDEX IF NOT EXISTS idx_players_token  ON players(player_token);
