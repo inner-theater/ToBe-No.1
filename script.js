@@ -247,26 +247,33 @@
   });
 
   // ===================== 大厅 =====================
+  // 日志
+  function log(tag, msg, data) {
+    const ts = new Date().toISOString().slice(11,19);
+    console.log(`[${ts}][${tag}]`, msg, data || '');
+  }
+
   async function enterLobby() {
     stopAllIntervals();
     switchView('lobby');
     physicsRAF = null; physicsUsers = {};
-    onlineUsers = []; // 清空在线列表
+    onlineUsers = [];
+    log('大厅','进入，重置状态');
 
-    // 先启动 Realtime（channel 必须先于 broadcast 创建）
     setupLobbyRealtime();
 
-    // 重置在线记录
     presenceMap = {};
     presenceUserInfo = {};
     presenceMap[playerToken] = Date.now();
     presenceUserInfo[playerToken] = { nickname: myProfile.nickname, avatar_b64: myProfile.avatar_b64 };
     onlineUsers = [{ player_token: playerToken, nickname: myProfile.nickname, avatar_b64: myProfile.avatar_b64 }];
     renderLobbyUsers();
+    log('大厅','初始在线', onlineUsers.length);
 
     // 广播自己的存在
     function broadcastPresence() {
-      if (!myProfile || !lobbyChannel) return;
+      if (!myProfile || !lobbyChannel) { log('心跳','跳过 myProfile/lobbyChannel为空'); return; }
+      log('心跳','发送presence', playerToken.slice(0,8));
       lobbyChannel.send({
         type: 'broadcast', event: 'presence',
         payload: { from_token: playerToken, nickname: myProfile.nickname, avatar_b64: myProfile.avatar_b64 }
@@ -280,17 +287,25 @@
     renderLobbyRooms();
 
     lobbyUsersInterval = setInterval(() => {
-      // 清理超时用户（15 秒无心跳）
       const now = Date.now();
+      let removed = 0;
       Object.keys(presenceMap).forEach(t => {
-        if (now - presenceMap[t] > 15000) delete presenceMap[t];
+        if (t !== playerToken && now - presenceMap[t] > 15000) {
+          const age = Math.round((now - presenceMap[t])/1000);
+          log('轮询','移除超时用户', t.slice(0,8)+' '+age+'s');
+          delete presenceMap[t];
+          removed++;
+        }
       });
-      // 重建 onlineUsers 从 presenceMap
+      const prevCount = onlineUsers.length;
       onlineUsers = [];
       Object.keys(presenceMap).forEach(t => {
         const info = presenceUserInfo[t];
         if (info) onlineUsers.push({ player_token: t, nickname: info.nickname, avatar_b64: info.avatar_b64 });
       });
+      if (prevCount !== onlineUsers.length || removed > 0) {
+        log('轮询','在线人数变化', prevCount+'->'+onlineUsers.length);
+      }
       renderLobbyUsers();
       fetchLobbyRooms().then(() => renderLobbyRooms());
     }, 3000);
@@ -408,6 +423,9 @@
     // 移除下线的
     Object.keys(physicsUsers).forEach(token => {
       if (!currentTokens.has(token)) {
+        const u = physicsUsers[token];
+        const nick = u && u.el ? u.el.querySelector('.avatar-nick').textContent : '?';
+        log('渲染','移除用户', nick);
         physicsUsers[token].el.remove();
         delete physicsUsers[token];
       }
@@ -417,6 +435,7 @@
     onlineUsers.forEach(user => {
       const isSelf = user.player_token === playerToken;
       if (!physicsUsers[user.player_token]) {
+        log('物理','新增用户', user.nickname);
         const div = document.createElement('div');
         div.className = 'float-avatar';
         div.dataset.token = user.player_token;
@@ -861,10 +880,9 @@
     if (lobbyChannel) supabase.removeChannel(lobbyChannel);
     lobbyChannel = supabase.channel('lobby')
       .on('broadcast', { event: 'presence' }, payload => {
-        // 收到别人的在线心跳
         const p = payload.payload;
         if (p.from_token !== playerToken) {
-          if (!presenceMap) presenceMap = {};
+          if (!presenceMap[p.from_token]) log('presence','新用户加入', p.nickname);
           presenceMap[p.from_token] = Date.now();
           presenceUserInfo[p.from_token] = { nickname: p.nickname, avatar_b64: p.avatar_b64 };
         }
