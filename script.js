@@ -643,14 +643,21 @@
     if (!isRoomOwner) return;
     if (allPlayers.length < 2) return showToast('至少 2 人才能开始！');
 
+    startBtn.disabled = true;
+    startBtn.textContent = '同步中...';
     // 把 room_members 同步到 players 表
+    let upsertOk = true;
     for (const p of allPlayers) {
-      await supabase.from('players').upsert({
+      const { error } = await supabase.from('players').upsert({
         room_id: roomId, name: p.name, player_token: p.player_token,
         click_count: 0, buff: '', final_score: 0, is_finished: false,
         is_owner: p.is_owner, game_started: true
       }, { onConflict: 'player_token,room_id' });
+      if (error) { console.error('upsert player error', error); upsertOk = false; }
     }
+    startBtn.disabled = false;
+    startBtn.textContent = '全军出击';
+    if (!upsertOk) return showToast('同步失败，请重试');
     // 双重保障：广播 + 数据库
     gameChannel.send({ type: 'broadcast', event: 'game_start', payload: {} });
     gameActive = true;
@@ -762,13 +769,20 @@
       polls++;
       const { data } = await supabase.from('players').select('*').eq('room_id', roomId);
       const players = data || [];
-      const done = players.every(p => p.is_finished);
+      // 如果还没有任何玩家数据（owner 的 upsert 可能还在进行），多等几轮
+      if (players.length === 0 && polls < 8) return;
+      const done = players.length > 0 && players.every(p => p.is_finished);
       if (done || polls >= 60) { clearInterval(iv); showResults(players); }
       else { const dc = players.filter(p=>p.is_finished).length; waitingOthers.textContent = `已结算 ${dc}/${players.length} 人...`; }
     }, 1000);
   }
 
-  async   function showResults(players) {
+  async function showResults(players) {
+    // 如果传进来的数据为空，直接从 DB 再拉一次
+    if (!players || players.length === 0) {
+      const { data: fallback } = await supabase.from('players').select('*').eq('room_id', roomId);
+      players = fallback || [];
+    }
     const sorted = (players||[]).filter(p=>p.is_finished).sort((a,b)=>b.final_score-a.final_score);
     // 获取头像（从 onlineUsers 或 users 表查找）
     const tokenMap = {};
@@ -795,15 +809,23 @@
         await supabase.from('game_history').insert({
           room_name: currentRoom ? currentRoom.name : '',
           room_id: currentRoom ? currentRoom.id : '',
-          players_json: sorted.map(p=>({
+          players_json: JSON.stringify(sorted.map(p=>({
             name:p.name, nickname:p.name, score:p.final_score, clicks:p.click_count,
             buff:p.buff, avatar:(tokenMap[p.player_token]||{}).avatar||''
-          })),
+          }))),
           loser: sorted[sorted.length-1].player_token,
           loser_nickname: sorted[sorted.length-1].name,
           played_at: new Date().toISOString()
         });
-      } catch(e) {}
+      } catch(e) { console.error('save history error', e); }
+    } else {
+      loserNameEl.textContent = '???';
+      rankingList.innerHTML = '<p class="empty-hint" style="text-align:center;padding:24px">⏳ 数据加载中，稍后自动更新...</p>';
+      // 3秒后再试一次
+      setTimeout(async () => {
+        const { data: retry } = await supabase.from('players').select('*').eq('room_id', roomId);
+        if (retry && retry.length > 0) showResults(retry);
+      }, 3000);
     }
     switchView('result');
     if (isRoomOwner) { ownerReset.style.display = 'block'; replayBtn.style.display = 'block'; }
@@ -875,7 +897,7 @@
           <div class="h-date">${new Date(r.played_at).toLocaleString('zh-CN')}</div>
           <div class="h-room">${escapeHTML(r.room_name)}</div>
           <div class="h-players">${escapeHTML(summary)}</div>
-          <div class="h-loser">🎤 下周主持：${escapeHTML(r.loser)}</div>
+          <div class="h-loser">🎤 下周主持：${escapeHTML(r.loser_nickname || r.loser)}</div>
         </div>`;
       }).join('');
     } catch(e) {

@@ -91,12 +91,13 @@ CREATE INDEX IF NOT EXISTS idx_players_token  ON players(player_token);
 -- 7. 游戏历史记录
 -- ============================================================
 CREATE TABLE IF NOT EXISTS game_history (
-  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  room_name    TEXT NOT NULL,
-  room_id      UUID NOT NULL,
-  players_json TEXT NOT NULL,
-  loser        TEXT NOT NULL,
-  played_at    TIMESTAMPTZ DEFAULT now()
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  room_name      TEXT NOT NULL,
+  room_id        UUID NOT NULL,
+  players_json   TEXT NOT NULL,
+  loser          TEXT NOT NULL,
+  loser_nickname TEXT DEFAULT '',
+  played_at      TIMESTAMPTZ DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_gh_room ON game_history(room_id);
 
