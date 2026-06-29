@@ -455,14 +455,19 @@
     renderPlayerListUI();
     playerCountEl.textContent = allPlayers.length;
     if (isRoomOwner) ownerActions.style.display = 'block';
+    else ownerActions.style.display = 'none';
 
-    // 非房主检测游戏是否已开始
-    if (!isRoomOwner && !gameActive) {
-      const { data: players } = await supabase.from('players').select('player_token').eq('room_id', roomId).eq('game_started', true).eq('player_token', playerToken);
-      if (players && players.length > 0) {
-        gameActive = true;
-        enterGamePhase();
-      }
+    // 所有非房主检测游戏是否已开始（同时通过 players 表和 Realtime 双重保障）
+    if (!gameActive && !gameFinished) {
+      try {
+        const { data: check } = await supabase.from('players')
+          .select('game_started').eq('room_id', roomId).eq('game_started', true).limit(1);
+        if (check && check.length > 0) {
+          gameActive = true;
+          stopAllIntervals();
+          enterGamePhase();
+        }
+      } catch(e) {}
     }
   }
 
@@ -505,6 +510,8 @@
         is_owner: p.is_owner, game_started: true
       }, { onConflict: 'player_token,room_id' });
     }
+    // 双重保障：广播 + 数据库
+    gameChannel.send({ type: 'broadcast', event: 'game_start', payload: {} });
     gameActive = true;
     enterGamePhase();
   });
@@ -783,10 +790,17 @@
   function setupGameRealtime() {
     if (gameChannel) supabase.removeChannel(gameChannel);
     gameChannel = supabase.channel('game-'+roomId)
-      .on('postgres_changes', { event:'*', schema:'public', table:'players', filter: 'room_id=eq.'+roomId }, payload => {
-        // 非房主检测到游戏开始
-        if (!isRoomOwner && payload.new && payload.new.game_started && !gameActive && !gameFinished) {
+      .on('broadcast', { event: 'game_start' }, () => {
+        if (!gameActive && !gameFinished) {
           gameActive = true;
+          stopAllIntervals();
+          enterGamePhase();
+        }
+      })
+      .on('postgres_changes', { event:'*', schema:'public', table:'players', filter: 'room_id=eq.'+roomId }, payload => {
+        if (!gameActive && !gameFinished && payload.new && payload.new.game_started) {
+          gameActive = true;
+          stopAllIntervals();
           enterGamePhase();
           return;
         }
