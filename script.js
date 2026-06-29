@@ -33,6 +33,7 @@
   const roomCreateForm   = $('#room-create-form');
   const roomNameInput    = $('#room-name-input');
   const roomCreateConfirm = $('#room-create-confirm');
+  const roomCreateCancel  = $('#room-create-cancel');
   const commentInput     = $('#comment-input');
   const commentSendBtn   = $('#comment-send-btn');
   const itemPopup        = $('#item-popup');
