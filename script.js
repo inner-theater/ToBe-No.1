@@ -937,12 +937,12 @@
         localStorage.setItem('profile_avatar', myProfile.avatar_b64);
         enterLobby();
       } else {
-        // DB 里没这条记录了（可能被清过），也进大厅让它重建
+        // DB 里没这条记录了，重新插入
         myProfile = { nickname: savedNick, avatar_b64: savedAvatar || '' };
-        await supabase.from('users').upsert({
+        await supabase.from('users').insert({
           nickname: savedNick, avatar_b64: savedAvatar || '',
           player_token: playerToken, is_online: true, last_seen: new Date().toISOString()
-        }, { onConflict: 'nickname' });
+        });
         enterLobby();
       }
     } else {
