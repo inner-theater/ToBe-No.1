@@ -880,8 +880,8 @@
       }
 
       // 加入成功 → 锁定表单，显示已就位
-      lockJoinForm(playerName);
       setBtnLoading(joinBtn, false);
+      lockJoinForm(playerName);
     } else {
       nameInput.disabled = false;
       setBtnLoading(joinBtn, false);
