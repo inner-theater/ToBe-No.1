@@ -102,9 +102,43 @@ body::before{
 .hit-effect{ position:absolute; font-size:2rem; pointer-events:none; z-index:101; animation:hitBurst .6s ease-out forwards }
 @keyframes hitBurst{ 0%{ transform:scale(0); opacity:1 } 100%{ transform:scale(2); opacity:0 } }
 /* 头像上方弹幕气泡 */
-.chat-bubble{ position:absolute; background:rgba(30,30,60,.95); border:1px solid var(--neon-cyan); border-radius:12px; padding:6px 12px; font-size:.8rem; color:var(--text-primary); white-space:nowrap; pointer-events:none; z-index:150; animation:bubbleUp 5s ease-out forwards }
-.chat-bubble::after{ content:''; position:absolute; bottom:-12px; left:50%; transform:translateX(-50%); width:2px; height:12px; border-left:2px dashed var(--neon-cyan) }
-@keyframes bubbleUp{ 0%{ opacity:0; transform:translateY(10px) } 10%{ opacity:1; transform:translateY(0) } 80%{ opacity:1 } 100%{ opacity:0; transform:translateY(-60px) } }
+.chat-bubble{
+  position:absolute;
+  background:linear-gradient(135deg,rgba(60,20,120,.92),rgba(20,20,50,.92));
+  border:1px solid rgba(168,85,247,.4);
+  border-radius:14px;
+  padding:8px 14px;
+  font-size:.8rem;
+  color:#fff;
+  white-space:nowrap;
+  pointer-events:none;
+  z-index:150;
+  box-shadow:0 4px 20px rgba(168,85,247,.2),0 0 40px rgba(6,182,212,.08);
+  animation:bubbleFloat 5s ease-out forwards;
+  text-shadow:0 0 6px rgba(168,85,247,.3);
+}
+.chat-bubble::after{
+  content:'';
+  position:absolute;
+  bottom:-8px;
+  left:50%;
+  transform:translateX(-50%);
+  width:0;height:0;
+  border-left:7px solid transparent;
+  border-right:7px solid transparent;
+  border-top:9px solid rgba(60,20,120,.92);
+}
+.chat-bubble.stack1{ top:-50px }
+.chat-bubble.stack2{ top:-90px }
+.chat-bubble.stack3{ top:-130px }
+@keyframes bubbleFloat{
+  0%{ opacity:0; transform:translateY(12px) scale(.85) rotate(-2deg) }
+  8%{ opacity:1; transform:translateY(0) scale(1) rotate(0deg) }
+  15%{ transform:translateY(-3px) scale(1.02) rotate(1deg) }
+  25%{ transform:translateY(0) scale(1) rotate(0deg) }
+  75%{ opacity:1; transform:translateY(-20px) scale(.98) }
+  100%{ opacity:0; transform:translateY(-50px) scale(.9) }
+}
 
 /* 房间面板 */
 .room-panel{ width:200px; flex-shrink:0; background:var(--bg-card); border:1px solid var(--border-color); border-radius:var(--radius-lg); padding:12px; display:flex; flex-direction:column; gap:10px; overflow-y:auto }

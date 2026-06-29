@@ -868,8 +868,12 @@
   function showBubble(token, nick, msg) {
     const avatar = lobbyStage.querySelector(`[data-token="${token}"]`);
     if (!avatar) return;
+    // 多个气泡堆叠：count 已有的 bubble，给新的分配 stack 层级
+    const existing = avatar.querySelectorAll('.chat-bubble');
+    const stackIdx = existing.length % 3;
     const bubble = document.createElement('div');
     bubble.className = 'chat-bubble';
+    if (stackIdx > 0) bubble.classList.add('stack' + stackIdx);
     bubble.textContent = `${nick}: ${msg}`;
     avatar.appendChild(bubble);
     setTimeout(() => bubble.remove(), 5000);
