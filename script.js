@@ -280,7 +280,7 @@
       });
     }
     broadcastPresence();
-    heartbeatInterval = setInterval(broadcastPresence, 5000);
+    heartbeatInterval = setInterval(broadcastPresence, 2000);
 
     // 加载房间 + 轮询
     await fetchLobbyRooms();
@@ -290,7 +290,7 @@
       const now = Date.now();
       let removed = 0;
       Object.keys(presenceMap).forEach(t => {
-        if (t !== playerToken && now - presenceMap[t] > 15000) {
+        if (t !== playerToken && now - presenceMap[t] > 6000) {
           const age = Math.round((now - presenceMap[t])/1000);
           log('轮询','移除超时用户', t.slice(0,8)+' '+age+'s');
           delete presenceMap[t];
@@ -308,7 +308,7 @@
       }
       renderLobbyUsers();
       fetchLobbyRooms().then(() => renderLobbyRooms());
-    }, 3000);
+    }, 1000);
 
     // 退出
     logoutBtn.onclick = async () => {
