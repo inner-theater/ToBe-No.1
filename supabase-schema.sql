@@ -86,14 +86,27 @@ CREATE INDEX IF NOT EXISTS idx_players_room_id ON players(room_id);
 CREATE INDEX IF NOT EXISTS idx_players_token  ON players(player_token);
 
 -- ============================================================
--- 7. RLS 策略
+-- 7. 游戏历史记录
+-- ============================================================
+CREATE TABLE IF NOT EXISTS game_history (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  room_name    TEXT NOT NULL,
+  room_id      UUID NOT NULL,
+  players_json TEXT NOT NULL,
+  loser        TEXT NOT NULL,
+  played_at    TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_gh_room ON game_history(room_id);
+
+-- ============================================================
+-- 8. RLS 策略
 -- ============================================================
 ALTER TABLE users          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE rooms          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE room_members   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lobby_items    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lobby_comments ENABLE ROW LEVEL SECURITY;
-ALTER TABLE players        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE game_history   ENABLE ROW LEVEL SECURITY;
 
 -- 公开读取 & 写入（内部工具，依赖应用层安全校验）
 DO $$
@@ -101,7 +114,7 @@ DECLARE
   tbl TEXT;
 BEGIN
   FOR tbl IN
-    SELECT unnest(ARRAY['users','rooms','room_members','lobby_items','lobby_comments','players'])
+    SELECT unnest(ARRAY['users','rooms','room_members','lobby_items','lobby_comments','players','game_history'])
   LOOP
     EXECUTE format('DROP POLICY IF EXISTS "public_access" ON %I', tbl);
     EXECUTE format('CREATE POLICY "public_access" ON %I FOR SELECT USING (true)', tbl);
@@ -118,7 +131,7 @@ DO $$
 DECLARE
   tbl TEXT;
 BEGIN
-  FOREACH tbl IN ARRAY ARRAY['users','rooms','lobby_items','lobby_comments','room_members','players']
+  FOREACH tbl IN ARRAY ARRAY['users','rooms','lobby_items','lobby_comments','room_members','players','game_history']
   LOOP
     IF NOT EXISTS (
       SELECT 1 FROM pg_publication_tables

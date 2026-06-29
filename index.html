@@ -40,6 +40,7 @@
     <div class="lobby-container">
       <!-- 顶部栏 -->
       <header class="lobby-header">
+        <button id="history-btn" class="btn btn-small btn-secondary" style="position:absolute;left:0">📋 历史</button>
         <h1 class="lobby-title neon-text">活动大厅</h1>
         <button id="create-room-btn" class="btn btn-small btn-primary">创建房间</button>
       </header>
@@ -148,6 +149,17 @@
         <button class="item-option" data-item="poop">💩<br>大便</button>
       </div>
       <button class="item-popup-close" id="item-popup-close">取消</button>
+    </div>
+  </div>
+
+  <!-- 历史记录弹窗 -->
+  <div id="history-modal" class="item-popup" style="display:none">
+    <div class="history-modal-content">
+      <h2 class="neon-text" style="font-size:1.2rem;margin-bottom:16px">📋 对战历史</h2>
+      <div class="history-list" id="history-list">
+        <p class="empty-hint">暂无记录</p>
+      </div>
+      <button class="btn btn-secondary btn-small" id="history-close" style="margin-top:12px">关闭</button>
     </div>
   </div>
 

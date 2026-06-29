@@ -68,7 +68,11 @@
   const resetBtn    = $('#reset-btn');
   const backToLobbyBtn = $('#back-to-lobby-btn');
 
-  const toastContainer = $('#toast-container');
+  // History
+  const historyBtn   = $('#history-btn');
+  const historyModal = $('#history-modal');
+  const historyList  = $('#history-list');
+  const historyClose = $('#history-close');
 
   // ===================== Supabase =====================
   const supabase = window.supabase.createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.key);
@@ -382,6 +386,15 @@
     renderPlayerListUI();
     playerCountEl.textContent = allPlayers.length;
     if (isRoomOwner) ownerActions.style.display = 'block';
+
+    // 非房主检测游戏是否已开始
+    if (!isRoomOwner && !gameActive) {
+      const { data: players } = await supabase.from('players').select('player_token').eq('room_id', roomId).eq('game_started', true).eq('player_token', playerToken);
+      if (players && players.length > 0) {
+        gameActive = true;
+        enterGamePhase();
+      }
+    }
   }
 
   function renderPlayerListUI() {
@@ -537,7 +550,17 @@
       const medal = i<3?['🥇','🥈','🥉'][i]:'';
       return `<div class="${cls}"><span class="rank-badge">${medal} #${i+1}</span><div class="rank-info"><div class="rank-name">${escapeHTML(p.name)}</div><div class="rank-buff">${p.buff||'无'} | ${p.click_count}次</div></div><span class="rank-score">${p.final_score}分</span></div>`;
     }).join('');
-    if (sorted.length>0) loserNameEl.textContent = sorted[sorted.length-1].name;
+    if (sorted.length>0) {
+      loserNameEl.textContent = sorted[sorted.length-1].name;
+      // 保存历史记录
+      supabase.from('game_history').insert({
+        room_name: currentRoom.name,
+        room_id: currentRoom.id,
+        players_json: JSON.stringify(sorted.map(p=>({name:p.name,score:p.final_score,clicks:p.click_count,buff:p.buff}))),
+        loser: sorted[sorted.length-1].name,
+        played_at: new Date().toISOString()
+      }).then(() => {});
+    }
     switchView('result');
     if (isRoomOwner) ownerReset.style.display = 'block';
     else ownerReset.style.display = 'none';
@@ -554,6 +577,32 @@
     stopAllIntervals();
     enterLobby();
   });
+
+  // 历史记录
+  historyBtn.addEventListener('click', () => showHistory());
+  historyClose.addEventListener('click', () => { historyModal.style.display = 'none'; });
+  historyModal.addEventListener('click', e => { if (e.target === historyModal) historyModal.style.display = 'none'; });
+
+  async function showHistory() {
+    historyModal.style.display = 'flex';
+    const { data } = await supabase.from('game_history').select('*').order('played_at', { ascending: false }).limit(50);
+    const records = data || [];
+    if (records.length === 0) {
+      historyList.innerHTML = '<p class="empty-hint">暂无记录，快去来一局！</p>';
+      return;
+    }
+    historyList.innerHTML = records.map(r => {
+      const players = JSON.parse(r.players_json || '[]');
+      const sorted = players.sort((a,b) => b.score - a.score);
+      const summary = sorted.map((p,i) => `${i+1}.${p.name}(${p.score}分${i===sorted.length-1?' 👈':''})`).join(' | ');
+      return `<div class="history-card">
+        <div class="h-date">${new Date(r.played_at).toLocaleString('zh-CN')}</div>
+        <div class="h-room">${escapeHTML(r.room_name)}</div>
+        <div class="h-players">${escapeHTML(summary)}</div>
+        <div class="h-loser">🎤 下周主持：${escapeHTML(r.loser)}</div>
+      </div>`;
+    }).join('');
+  }
 
   // ===================== 道具 & 弹幕 =====================
   function openItemPopup(targetUser) {
@@ -655,7 +704,13 @@
   function setupGameRealtime() {
     if (gameChannel) supabase.removeChannel(gameChannel);
     gameChannel = supabase.channel('game-'+roomId)
-      .on('postgres_changes', { event:'*', schema:'public', table:'players', filter: 'room_id=eq.'+roomId }, () => {
+      .on('postgres_changes', { event:'*', schema:'public', table:'players', filter: 'room_id=eq.'+roomId }, payload => {
+        // 非房主检测到游戏开始
+        if (!isRoomOwner && payload.new && payload.new.game_started && !gameActive && !gameFinished) {
+          gameActive = true;
+          enterGamePhase();
+          return;
+        }
         if (waitingView.classList.contains('active')) fetchWaitingPlayers().then(renderPlayerListUI);
         else if (resultView.classList.contains('active')) {
           supabase.from('players').select('*').eq('room_id',roomId).then(({data})=>{ if(data&&data.every(p=>p.is_finished)) showResults(data); });
