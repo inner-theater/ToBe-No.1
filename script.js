@@ -248,25 +248,23 @@
   async function enterLobby() {
     stopAllIntervals();
     switchView('lobby');
+    physicsRAF = null; physicsUsers = {}; // 重置物理
 
-    // 标记在线 + 心跳
+    // 标记在线 + 心跳（每 20 秒更新）
     await supabase.from('users').update({ is_online: true, last_seen: new Date().toISOString() }).eq('player_token', playerToken);
     if (heartbeatInterval) clearInterval(heartbeatInterval);
     heartbeatInterval = setInterval(() => {
-      supabase.from('users').update({ last_seen: new Date().toISOString(), is_online: true }).eq('player_token', playerToken);
-    }, 30000);
+      supabase.from('users').update({ last_seen: new Date().toISOString(), is_online: true }).eq('player_token', playerToken).then(()=>{}).catch(()=>{});
+    }, 20000);
 
     // 加载数据
     await Promise.all([fetchOnlineUsers(), fetchLobbyRooms()]);
     renderLobbyUsers();
     renderLobbyRooms();
 
-    // 启动实时 & 轮询
+    // 轮询（不主动标记他人离线，只过滤显示）
     setupLobbyRealtime();
     lobbyUsersInterval = setInterval(async () => {
-      // 清理超过 60 秒未心跳的用户
-      const cutoff = new Date(Date.now() - 60000).toISOString();
-      await supabase.from('users').update({ is_online: false }).lt('last_seen', cutoff).eq('is_online', true);
       fetchOnlineUsers().then(() => renderLobbyUsers());
       fetchLobbyRooms().then(() => renderLobbyRooms());
     }, 5000);
@@ -290,8 +288,8 @@
   }
 
   async function fetchOnlineUsers() {
-    // 过滤掉离线超过 60 秒的
-    const cutoff = new Date(Date.now() - 60000).toISOString();
+    // 在线 或 最近 120 秒内有心跳
+    const cutoff = new Date(Date.now() - 120000).toISOString();
     const { data } = await supabase.from('users').select('*').eq('is_online', true).gte('last_seen', cutoff).order('nickname');
     onlineUsers = data || [];
     return onlineUsers;
@@ -308,51 +306,110 @@
     return lobbyRooms;
   }
 
-  function renderLobbyUsers() {
-    const existing = {};
-    lobbyStage.querySelectorAll('.float-avatar').forEach(el => {
-      const token = el.dataset.token;
-      existing[token] = { el, x: parseFloat(el.style.left), y: parseFloat(el.style.top) };
-    });
+  // 大厅物理引擎
+  let physicsRAF = null;
+  let physicsUsers = {}; // { token: { el, x, y, vx, vy } }
 
-    const currentTokens = new Set(onlineUsers.map(u => u.player_token));
+  function startPhysics() {
+    if (physicsRAF) cancelAnimationFrame(physicsRAF);
+    function tick() {
+      const stageW = lobbyStage.clientWidth || 500;
+      const stageH = lobbyStage.clientHeight || 300;
+      const tokens = Object.keys(physicsUsers);
+      const avatarW = 52, avatarH = 76; // 头像+昵称大约尺寸
+
+      // 移动 + 墙壁反弹
+      for (const t of tokens) {
+        const p = physicsUsers[t];
+        p.x += p.vx;
+        p.y += p.vy;
+        if (p.x < 0) { p.x = 0; p.vx = Math.abs(p.vx); }
+        if (p.x > stageW - avatarW) { p.x = stageW - avatarW; p.vx = -Math.abs(p.vx); }
+        if (p.y < 0) { p.y = 0; p.vy = Math.abs(p.vy); }
+        if (p.y > stageH - avatarH) { p.y = stageH - avatarH; p.vy = -Math.abs(p.vy); }
+      }
+
+      // 头像间碰撞
+      for (let i = 0; i < tokens.length; i++) {
+        for (let j = i + 1; j < tokens.length; j++) {
+          const a = physicsUsers[tokens[i]], b = physicsUsers[tokens[j]];
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const dist = Math.sqrt(dx*dx + dy*dy);
+          const minDist = 52;
+          if (dist < minDist && dist > 0) {
+            const nx = dx / dist, ny = dy / dist;
+            const overlap = minDist - dist;
+            a.x -= nx * overlap * 0.5;
+            a.y -= ny * overlap * 0.5;
+            b.x += nx * overlap * 0.5;
+            b.y += ny * overlap * 0.5;
+            const rvx = a.vx - b.vx, rvy = a.vy - b.vy;
+            const rvDotN = rvx * nx + rvy * ny;
+            if (rvDotN > 0) {
+              a.vx -= rvDotN * nx * 0.8;
+              a.vy -= rvDotN * ny * 0.8;
+              b.vx += rvDotN * nx * 0.8;
+              b.vy += rvDotN * ny * 0.8;
+            }
+          }
+        }
+      }
+
+      // 应用位置到 DOM
+      for (const t of tokens) {
+        const p = physicsUsers[t];
+        p.el.style.left = p.x + 'px';
+        p.el.style.top = p.y + 'px';
+      }
+
+      physicsRAF = requestAnimationFrame(tick);
+    }
+    tick();
+  }
+
+  function stopPhysics() {
+    if (physicsRAF) { cancelAnimationFrame(physicsRAF); physicsRAF = null; }
+    physicsUsers = {};
+  }
+
+  function renderLobbyUsers() {
     const stageW = lobbyStage.clientWidth || 500;
     const stageH = lobbyStage.clientHeight || 300;
+    const currentTokens = new Set(onlineUsers.map(u => u.player_token));
 
-    // 移除已下线的
-    Object.keys(existing).forEach(token => {
-      if (!currentTokens.has(token)) existing[token].el.remove();
+    // 移除下线的
+    Object.keys(physicsUsers).forEach(token => {
+      if (!currentTokens.has(token)) {
+        physicsUsers[token].el.remove();
+        delete physicsUsers[token];
+      }
     });
 
-    // 添加/更新在线用户（包含自己）
+    // 添加 / 更新
     onlineUsers.forEach(user => {
-      let existingEl = existing[user.player_token];
       const isSelf = user.player_token === playerToken;
-      if (!existingEl) {
+      if (!physicsUsers[user.player_token]) {
         const div = document.createElement('div');
         div.className = 'float-avatar';
         div.dataset.token = user.player_token;
-        div.style.left = (30 + Math.random() * (stageW - 100)) + 'px';
-        div.style.top = (20 + Math.random() * (stageH - 100)) + 'px';
         div.innerHTML = `
           <div class="avatar-circle">${user.avatar_b64 ? `<img src="${user.avatar_b64}">` : ''}</div>
           <span class="avatar-nick">${escapeHTML(user.nickname)}</span>`;
         if (!isSelf) div.addEventListener('click', () => openItemPopup(user));
         lobbyStage.appendChild(div);
+        physicsUsers[user.player_token] = {
+          el: div,
+          x: 20 + Math.random() * (stageW - 80),
+          y: 20 + Math.random() * (stageH - 100),
+          vx: (Math.random() - 0.5) * 1.5,
+          vy: (Math.random() - 0.5) * 1.5
+        };
       } else {
-        existingEl.el.querySelector('.avatar-nick').textContent = user.nickname;
+        physicsUsers[user.player_token].el.querySelector('.avatar-nick').textContent = user.nickname;
       }
     });
 
-    // 随机移动
-    setTimeout(() => {
-      lobbyStage.querySelectorAll('.float-avatar').forEach(el => {
-        if (Math.random() > 0.3) {
-          el.style.left = (20 + Math.random() * (stageW - 100)) + 'px';
-          el.style.top = (20 + Math.random() * (stageH - 100)) + 'px';
-        }
-      });
-    }, 100);
+    if (!physicsRAF) startPhysics();
   }
 
   function renderLobbyRooms() {
@@ -815,6 +872,7 @@
   function stopAllIntervals() {
     if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
     if (lobbyUsersInterval) { clearInterval(lobbyUsersInterval); lobbyUsersInterval = null; }
+    stopPhysics();
   }
 
   // ===================== 全局 Realtime 事件 =====================
