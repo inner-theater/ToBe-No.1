@@ -104,6 +104,8 @@
   let pollInterval = null;
   let lobbyUsersInterval = null;
   let heartbeatInterval = null;
+  let presenceUserInfo = {};  // { token: { nickname, avatar_b64 } }
+  let presenceMap = {};       // { token: lastSeenTimestamp }
 
   // Realtime channels
   let lobbyChannel    = null;
@@ -248,26 +250,50 @@
   async function enterLobby() {
     stopAllIntervals();
     switchView('lobby');
-    physicsRAF = null; physicsUsers = {}; // 重置物理
+    physicsRAF = null; physicsUsers = {};
+    onlineUsers = []; // 清空在线列表
 
-    // 标记在线 + 心跳（每 20 秒更新）
-    await supabase.from('users').update({ is_online: true, last_seen: new Date().toISOString() }).eq('player_token', playerToken);
-    if (heartbeatInterval) clearInterval(heartbeatInterval);
-    heartbeatInterval = setInterval(() => {
-      supabase.from('users').update({ last_seen: new Date().toISOString(), is_online: true }).eq('player_token', playerToken).then(()=>{}).catch(()=>{});
-    }, 20000);
+    // 广播自己的存在（不依赖 DB）
+    function broadcastPresence() {
+      if (!myProfile) return;
+      lobbyChannel.send({
+        type: 'broadcast', event: 'presence',
+        payload: { from_token: playerToken, nickname: myProfile.nickname, avatar_b64: myProfile.avatar_b64 }
+      });
+    }
+    broadcastPresence();
+    heartbeatInterval = setInterval(broadcastPresence, 5000);
 
-    // 加载数据
-    await Promise.all([fetchOnlineUsers(), fetchLobbyRooms()]);
+    // 重置在线记录
+    presenceMap = {};
+    presenceUserInfo = {};
+    presenceMap[playerToken] = Date.now();
+    presenceUserInfo[playerToken] = { nickname: myProfile.nickname, avatar_b64: myProfile.avatar_b64 };
+    // 第一次立即显示自己
+    onlineUsers = [{ player_token: playerToken, nickname: myProfile.nickname, avatar_b64: myProfile.avatar_b64 }];
     renderLobbyUsers();
+
+    // 加载房间
+    await fetchLobbyRooms();
     renderLobbyRooms();
 
-    // 轮询（不主动标记他人离线，只过滤显示）
+    // 启动实时 & 轮询房间
     setupLobbyRealtime();
-    lobbyUsersInterval = setInterval(async () => {
-      fetchOnlineUsers().then(() => renderLobbyUsers());
+    lobbyUsersInterval = setInterval(() => {
+      // 清理超时用户（15 秒无心跳）
+      const now = Date.now();
+      Object.keys(presenceMap).forEach(t => {
+        if (now - presenceMap[t] > 15000) delete presenceMap[t];
+      });
+      // 重建 onlineUsers 从 presenceMap
+      onlineUsers = [];
+      Object.keys(presenceMap).forEach(t => {
+        const info = presenceUserInfo[t];
+        if (info) onlineUsers.push({ player_token: t, nickname: info.nickname, avatar_b64: info.avatar_b64 });
+      });
+      renderLobbyUsers();
       fetchLobbyRooms().then(() => renderLobbyRooms());
-    }, 5000);
+    }, 3000);
 
     // 退出
     logoutBtn.onclick = async () => {
@@ -312,30 +338,34 @@
 
   function startPhysics() {
     if (physicsRAF) cancelAnimationFrame(physicsRAF);
-    function tick() {
+    let lastTime = 0;
+    function tick(now) {
+      const dt = Math.min((now - lastTime) / 16, 3); // 限制最大步长
+      lastTime = now;
       const stageW = lobbyStage.clientWidth || 500;
       const stageH = lobbyStage.clientHeight || 300;
       const tokens = Object.keys(physicsUsers);
-      const avatarW = 52, avatarH = 76; // 头像+昵称大约尺寸
+      const avatarW = 56, avatarH = 80;
 
-      // 移动 + 墙壁反弹
       for (const t of tokens) {
         const p = physicsUsers[t];
-        p.x += p.vx;
-        p.y += p.vy;
-        if (p.x < 0) { p.x = 0; p.vx = Math.abs(p.vx); }
-        if (p.x > stageW - avatarW) { p.x = stageW - avatarW; p.vx = -Math.abs(p.vx); }
-        if (p.y < 0) { p.y = 0; p.vy = Math.abs(p.vy); }
-        if (p.y > stageH - avatarH) { p.y = stageH - avatarH; p.vy = -Math.abs(p.vy); }
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        if (p.x < 0) { p.x = 0; p.vx = Math.abs(p.vx) * 0.9; }
+        if (p.x > stageW - avatarW) { p.x = stageW - avatarW; p.vx = -Math.abs(p.vx) * 0.9; }
+        if (p.y < 0) { p.y = 0; p.vy = Math.abs(p.vy) * 0.9; }
+        if (p.y > stageH - avatarH) { p.y = stageH - avatarH; p.vy = -Math.abs(p.vy) * 0.9; }
+        // 减速摩擦
+        p.vx *= 0.999;
+        p.vy *= 0.999;
       }
 
-      // 头像间碰撞
       for (let i = 0; i < tokens.length; i++) {
         for (let j = i + 1; j < tokens.length; j++) {
           const a = physicsUsers[tokens[i]], b = physicsUsers[tokens[j]];
           const dx = b.x - a.x, dy = b.y - a.y;
           const dist = Math.sqrt(dx*dx + dy*dy);
-          const minDist = 52;
+          const minDist = 56;
           if (dist < minDist && dist > 0) {
             const nx = dx / dist, ny = dy / dist;
             const overlap = minDist - dist;
@@ -346,25 +376,23 @@
             const rvx = a.vx - b.vx, rvy = a.vy - b.vy;
             const rvDotN = rvx * nx + rvy * ny;
             if (rvDotN > 0) {
-              a.vx -= rvDotN * nx * 0.8;
-              a.vy -= rvDotN * ny * 0.8;
-              b.vx += rvDotN * nx * 0.8;
-              b.vy += rvDotN * ny * 0.8;
+              a.vx -= rvDotN * nx * 0.5;
+              a.vy -= rvDotN * ny * 0.5;
+              b.vx += rvDotN * nx * 0.5;
+              b.vy += rvDotN * ny * 0.5;
             }
           }
         }
       }
 
-      // 应用位置到 DOM
       for (const t of tokens) {
         const p = physicsUsers[t];
         p.el.style.left = p.x + 'px';
         p.el.style.top = p.y + 'px';
       }
-
       physicsRAF = requestAnimationFrame(tick);
     }
-    tick();
+    physicsRAF = requestAnimationFrame(tick);
   }
 
   function stopPhysics() {
@@ -832,6 +860,15 @@
   function setupLobbyRealtime() {
     if (lobbyChannel) supabase.removeChannel(lobbyChannel);
     lobbyChannel = supabase.channel('lobby')
+      .on('broadcast', { event: 'presence' }, payload => {
+        // 收到别人的在线心跳
+        const p = payload.payload;
+        if (p.from_token !== playerToken) {
+          if (!presenceMap) presenceMap = {};
+          presenceMap[p.from_token] = Date.now();
+          presenceUserInfo[p.from_token] = { nickname: p.nickname, avatar_b64: p.avatar_b64 };
+        }
+      })
       .on('broadcast', { event: 'item_thrown' }, payload => {
         if (payload.payload.from_token !== playerToken) {
           animateItemFly(payload.payload.from_token, payload.payload.item_type);
