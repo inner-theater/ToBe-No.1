@@ -99,6 +99,7 @@
   let lastItemTime = 0;
   let pollInterval = null;
   let lobbyUsersInterval = null;
+  let heartbeatInterval = null;
 
   // Realtime channels
   let lobbyChannel    = null;
@@ -246,8 +247,9 @@
 
     // 标记在线 + 心跳
     await supabase.from('users').update({ is_online: true, last_seen: new Date().toISOString() }).eq('player_token', playerToken);
-    let heartbeat = setInterval(() => {
-      supabase.from('users').update({ last_seen: new Date().toISOString() }).eq('player_token', playerToken);
+    if (heartbeatInterval) clearInterval(heartbeatInterval);
+    heartbeatInterval = setInterval(() => {
+      supabase.from('users').update({ last_seen: new Date().toISOString(), is_online: true }).eq('player_token', playerToken);
     }, 30000);
 
     // 加载数据
@@ -268,7 +270,7 @@
     // 退出
     logoutBtn.onclick = async () => {
       await supabase.from('users').update({ is_online: false }).eq('player_token', playerToken);
-      clearInterval(heartbeat);
+      if (heartbeatInterval) clearInterval(heartbeatInterval);
       stopAllIntervals();
       myProfile = null;
       localStorage.removeItem('profile_nickname');
@@ -368,7 +370,15 @@
 
   // 创建房间
   createRoomBtn.addEventListener('click', () => {
-    roomCreateForm.style.display = roomCreateForm.style.display === 'none' ? 'flex' : 'none';
+    roomCreateForm.style.display = 'flex';
+    roomNameInput.focus();
+    createRoomBtn.style.display = 'none';
+  });
+
+  roomCreateCancel.addEventListener('click', () => {
+    roomCreateForm.style.display = 'none';
+    roomNameInput.value = '';
+    createRoomBtn.style.display = 'block';
   });
 
   roomCreateConfirm.addEventListener('click', async () => {
@@ -380,11 +390,11 @@
     }).select().single();
     if (error) { showToast('创建失败'); roomCreateConfirm.disabled = false; return; }
 
-    // 自动加入
     await supabase.from('room_members').insert({ room_id: data.id, user_token: playerToken, is_owner: true });
     roomCreateForm.style.display = 'none';
     roomNameInput.value = '';
     roomCreateConfirm.disabled = false;
+    createRoomBtn.style.display = 'block';
     currentRoom = data;
     isRoomOwner = true;
     enterWaitingRoom(data);
@@ -811,11 +821,22 @@
 
   init();
 
-  window.addEventListener('beforeunload', () => {
-    stopAllIntervals();
-    if (lobbyChannel) supabase.removeChannel(lobbyChannel);
-    if (gameChannel) supabase.removeChannel(gameChannel);
-    if (playerToken) supabase.from('users').update({ is_online: false }).eq('player_token', playerToken);
+  // 可靠退出：sendBeacon 确保关闭网页也能发送离线信号
+  function markOffline() {
+    if (!playerToken) return;
+    const url = `${SUPABASE_CONFIG.url}/rest/v1/users?player_token=eq.${playerToken}`;
+    const body = JSON.stringify({ is_online: false, last_seen: new Date().toISOString() });
+    navigator.sendBeacon(url, new Blob([body], {type:'application/json'}));
+  }
+
+  window.addEventListener('beforeunload', markOffline);
+  window.addEventListener('pagehide', markOffline);
+  window.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden' && playerToken) {
+      supabase.from('users').update({ is_online: false, last_seen: new Date().toISOString() }).eq('player_token', playerToken);
+    } else if (document.visibilityState === 'visible' && myProfile && playerToken) {
+      supabase.from('users').update({ is_online: true, last_seen: new Date().toISOString() }).eq('player_token', playerToken);
+    }
   });
 
 })();
