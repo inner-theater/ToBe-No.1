@@ -34,6 +34,7 @@
   const roomNameInput    = $('#room-name-input');
   const roomCreateConfirm = $('#room-create-confirm');
   const roomCreateCancel  = $('#room-create-cancel');
+  const roomPasswordInput = $('#room-password-input');
   const commentInput     = $('#comment-input');
   const commentSendBtn   = $('#comment-send-btn');
   const itemPopup        = $('#item-popup');
@@ -74,6 +75,8 @@
   const historyModal = $('#history-modal');
   const historyList  = $('#history-list');
   const historyClose = $('#history-close');
+
+  const toastContainer = $('#toast-container');
 
   // ===================== Supabase =====================
   const supabase = window.supabase.createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.key);
@@ -359,7 +362,7 @@
     }
     roomList.innerHTML = lobbyRooms.map(r => `
       <div class="room-card" data-room-id="${r.id}">
-        <div class="room-name">${escapeHTML(r.name)}</div>
+        <div class="room-name">${r.password ? '🔒 ' : ''}${escapeHTML(r.name)}</div>
         <div class="room-info">${r._memberCount || 0} 人</div>
       </div>
     `).join('');
@@ -385,15 +388,17 @@
   roomCreateConfirm.addEventListener('click', async () => {
     const name = roomNameInput.value.trim();
     if (!name) return showToast('输入房间名');
+    const pwd = roomPasswordInput.value.trim();
     roomCreateConfirm.disabled = true;
     const { data, error } = await supabase.from('rooms').insert({
-      name, creator_token: playerToken, is_active: true
+      name, password: pwd, creator_token: playerToken, is_active: true
     }).select().single();
     if (error) { showToast('创建失败'); roomCreateConfirm.disabled = false; return; }
 
     await supabase.from('room_members').insert({ room_id: data.id, user_token: playerToken, is_owner: true });
     roomCreateForm.style.display = 'none';
     roomNameInput.value = '';
+    roomPasswordInput.value = '';
     roomCreateConfirm.disabled = false;
     createRoomBtn.style.display = 'block';
     currentRoom = data;
@@ -405,7 +410,10 @@
   async function joinRoom(roomId) {
     const { data: room } = await supabase.from('rooms').select('*').eq('id', roomId).single();
     if (!room) return showToast('房间不存在');
-    // 检查是否已加入
+    if (room.password) {
+      const pwd = prompt('此房间需要密码：');
+      if (pwd !== room.password) return showToast('密码错误');
+    }
     const { data: existing } = await supabase.from('room_members').select('*').eq('room_id', roomId).eq('user_token', playerToken);
     if (existing && existing.length === 0) {
       const { error } = await supabase.from('room_members').insert({ room_id: roomId, user_token: playerToken, is_owner: false });
@@ -441,7 +449,7 @@
     allPlayers = (users || []).map(u => ({
       id: u.id, name: u.nickname, player_token: u.player_token,
       click_count: 0, buff: '', final_score: 0, is_finished: false,
-      is_owner: u.player_token === currentRoom.creator_token,
+      is_owner: u.player_token === (currentRoom ? currentRoom.creator_token : ''),
       game_started: false
     }));
     renderPlayerListUI();
@@ -469,8 +477,16 @@
   }
 
   leaveRoomBtn.addEventListener('click', async () => {
+    const wasOwner = isRoomOwner && currentRoom;
     await supabase.from('room_members').delete().eq('user_token', playerToken).eq('room_id', roomId);
-    if (isRoomOwner) await supabase.from('rooms').update({ is_active: false }).eq('id', roomId);
+    // 房主离开 → 顺延第一个人为新房主
+    if (wasOwner) {
+      const { data: members } = await supabase.from('room_members').select('*').eq('room_id', roomId).order('joined_at', { ascending: true }).limit(1);
+      if (members && members.length > 0) {
+        await supabase.from('room_members').update({ is_owner: true }).eq('id', members[0].id);
+        await supabase.from('rooms').update({ creator_token: members[0].user_token }).eq('id', roomId);
+      }
+    }
     stopAllIntervals();
     currentRoom = null; isRoomOwner = false; roomId = null; allPlayers = [];
     enterLobby();
@@ -604,7 +620,7 @@
     }, 1000);
   }
 
-  function showResults(players) {
+  async function showResults(players) {
     const sorted = (players||[]).filter(p=>p.is_finished).sort((a,b)=>b.final_score-a.final_score);
     rankingList.innerHTML = sorted.map((p,i)=>{
       const cls = i===sorted.length-1&&sorted.length>1?'rank-item last-place':'rank-item';
@@ -613,14 +629,15 @@
     }).join('');
     if (sorted.length>0) {
       loserNameEl.textContent = sorted[sorted.length-1].name;
-      // 保存历史记录
-      supabase.from('game_history').insert({
-        room_name: currentRoom.name,
-        room_id: currentRoom.id,
-        players_json: JSON.stringify(sorted.map(p=>({name:p.name,score:p.final_score,clicks:p.click_count,buff:p.buff}))),
-        loser: sorted[sorted.length-1].name,
-        played_at: new Date().toISOString()
-      }).then(() => {});
+      try {
+        await supabase.from('game_history').insert({
+          room_name: currentRoom ? currentRoom.name : '',
+          room_id: currentRoom ? currentRoom.id : '',
+          players_json: JSON.stringify(sorted.map(p=>({name:p.name,score:p.final_score,clicks:p.click_count,buff:p.buff}))),
+          loser: sorted[sorted.length-1].name,
+          played_at: new Date().toISOString()
+        });
+      } catch(e) {}
     }
     switchView('result');
     if (isRoomOwner) ownerReset.style.display = 'block';
@@ -646,23 +663,27 @@
 
   async function showHistory() {
     historyModal.style.display = 'flex';
-    const { data } = await supabase.from('game_history').select('*').order('played_at', { ascending: false }).limit(50);
-    const records = data || [];
-    if (records.length === 0) {
-      historyList.innerHTML = '<p class="empty-hint">暂无记录，快去来一局！</p>';
-      return;
+    try {
+      const { data } = await supabase.from('game_history').select('*').order('played_at', { ascending: false }).limit(50);
+      const records = data || [];
+      if (records.length === 0) {
+        historyList.innerHTML = '<p class="empty-hint">暂无记录，快去来一局！</p>';
+        return;
+      }
+      historyList.innerHTML = records.map(r => {
+        const players = JSON.parse(r.players_json || '[]');
+        const sorted = players.sort((a,b) => b.score - a.score);
+        const summary = sorted.map((p,i) => `${i+1}.${p.name}(${p.score}分${i===sorted.length-1?' 👈':''})`).join(' | ');
+        return `<div class="history-card">
+          <div class="h-date">${new Date(r.played_at).toLocaleString('zh-CN')}</div>
+          <div class="h-room">${escapeHTML(r.room_name)}</div>
+          <div class="h-players">${escapeHTML(summary)}</div>
+          <div class="h-loser">🎤 下周主持：${escapeHTML(r.loser)}</div>
+        </div>`;
+      }).join('');
+    } catch(e) {
+      historyList.innerHTML = '<p class="empty-hint">暂无记录（需先执行建表 SQL）</p>';
     }
-    historyList.innerHTML = records.map(r => {
-      const players = JSON.parse(r.players_json || '[]');
-      const sorted = players.sort((a,b) => b.score - a.score);
-      const summary = sorted.map((p,i) => `${i+1}.${p.name}(${p.score}分${i===sorted.length-1?' 👈':''})`).join(' | ');
-      return `<div class="history-card">
-        <div class="h-date">${new Date(r.played_at).toLocaleString('zh-CN')}</div>
-        <div class="h-room">${escapeHTML(r.room_name)}</div>
-        <div class="h-players">${escapeHTML(summary)}</div>
-        <div class="h-loser">🎤 下周主持：${escapeHTML(r.loser)}</div>
-      </div>`;
-    }).join('');
   }
 
   // ===================== 道具 & 弹幕 =====================

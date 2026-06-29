@@ -103,6 +103,7 @@ body::before{
 @keyframes hitBurst{ 0%{ transform:scale(0); opacity:1 } 100%{ transform:scale(2); opacity:0 } }
 /* 头像上方弹幕气泡 */
 .chat-bubble{ position:absolute; background:rgba(30,30,60,.95); border:1px solid var(--neon-cyan); border-radius:12px; padding:6px 12px; font-size:.8rem; color:var(--text-primary); white-space:nowrap; pointer-events:none; z-index:150; animation:bubbleUp 5s ease-out forwards }
+.chat-bubble::after{ content:''; position:absolute; bottom:-12px; left:50%; transform:translateX(-50%); width:2px; height:12px; border-left:2px dashed var(--neon-cyan) }
 @keyframes bubbleUp{ 0%{ opacity:0; transform:translateY(10px) } 10%{ opacity:1; transform:translateY(0) } 80%{ opacity:1 } 100%{ opacity:0; transform:translateY(-60px) } }
 
 /* 房间面板 */

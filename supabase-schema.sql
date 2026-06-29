@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS rooms (
   id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name         TEXT NOT NULL,
   creator_token TEXT NOT NULL,
+  password     TEXT DEFAULT '',
   is_active    BOOLEAN DEFAULT true,
   created_at   TIMESTAMPTZ DEFAULT now()
 );
@@ -124,6 +125,25 @@ BEGIN
     EXECUTE format('CREATE POLICY "public_delete" ON %I FOR DELETE USING (true)', tbl);
   END LOOP;
 END $$;
+
+-- ============================================================
+-- 9. 房间数据自动清理（最后一人离开后删除房间）
+-- ============================================================
+CREATE OR REPLACE FUNCTION cleanup_empty_rooms()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM room_members WHERE room_id = OLD.room_id) THEN
+    DELETE FROM rooms WHERE id = OLD.room_id;
+    DELETE FROM players WHERE room_id = OLD.room_id::text;
+  END IF;
+  RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_cleanup_room ON room_members;
+CREATE TRIGGER trg_cleanup_room
+AFTER DELETE ON room_members
+FOR EACH ROW EXECUTE FUNCTION cleanup_empty_rooms();
 
 -- ============================================================
 -- 8. Realtime 复制（幂等，可重复执行）
