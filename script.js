@@ -560,10 +560,9 @@
     replayBtn.style.display = 'none';
     allPlayers = [];
     gameActive = false; gameFinished = false;
-    fetchWaitingPlayers();
+    await fetchWaitingPlayers();
     setupGameRealtime();
     pollInterval = setInterval(fetchWaitingPlayers, 2000);
-    renderPlayerListUI();
   }
 
   async function fetchWaitingPlayers() {
