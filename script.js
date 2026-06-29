@@ -1,1057 +1,729 @@
 /* ============================================================
-   🏆 谁是第一名 — 核心游戏逻辑
+   🏆 谁是第一名 — 大厅 + 游戏完整逻辑
    ============================================================ */
-
 (function () {
   'use strict';
 
   // ===================== 常量 =====================
   const COUNTDOWN_SECONDS = 10;
-  const COUNTDOWN_PREP = 3; // 开始前 3 秒预备倒计时
+  const COUNTDOWN_PREP = 3;
+  const ITEM_COOLDOWN = 15000; // 15 秒道具冷却
 
-  // ===================== DOM 引用 =====================
-  const $ = (sel) => document.querySelector(sel);
-  const $$ = (sel) => document.querySelectorAll(sel);
-
+  // ===================== DOM =====================
+  const $ = s => document.querySelector(s);
+  // Views
+  const profileView = $('#profile-view');
+  const lobbyView   = $('#lobby-view');
   const waitingView = $('#waiting-view');
   const gameView    = $('#game-view');
   const resultView  = $('#result-view');
 
-  const nameInput     = $('#name-input');
-  const joinBtn       = $('#join-btn');
-  const playerList    = $('#player-list');
-  const playerCount   = $('#player-count');
-  const roomTitle     = $('#room-title');
+  // Profile
+  const avatarPreview = $('#avatar-preview');
+  const avatarInput   = $('#avatar-input');
+  const nicknameInput = $('#nickname-input');
+  const nicknameCount = $('#nickname-count');
+  const profileSaveBtn = $('#profile-save-btn');
+
+  // Lobby
+  const lobbyStage       = $('#lobby-stage');
+  const myAvatarSmall    = $('#my-avatar-small');
+  const myNicknameDisp   = $('#my-nickname-display');
+  const roomList         = $('#room-list');
+  const createRoomBtn    = $('#create-room-btn');
+  const roomCreateForm   = $('#room-create-form');
+  const roomNameInput    = $('#room-name-input');
+  const roomCreateConfirm = $('#room-create-confirm');
+  const barrageLayer     = $('#barrage-layer');
+  const commentInput     = $('#comment-input');
+  const commentSendBtn   = $('#comment-send-btn');
+  const itemPalette      = $('#item-palette');
+  const itemPopup        = $('#item-popup');
+  const itemTargetName   = $('#item-target-name');
+  const itemPopupClose   = $('#item-popup-close');
+
+  // Waiting
+  const playerListEl  = $('#player-list');
+  const playerCountEl = $('#player-count');
   const ownerActions  = $('#owner-actions');
   const startBtn      = $('#start-btn');
+  const leaveRoomBtn  = $('#leave-room-btn');
+  const waitingRoomTitle = $('#waiting-room-title');
+  const roomSubtitle  = $('#room-subtitle');
 
+  // Game
   const countdownDisplay = $('#countdown-display');
   const countdownLabel   = $('#countdown-label');
   const clickArea        = $('#click-area');
   const clickScoreDisplay = $('#click-score-display');
   const clickBtn         = $('#click-btn');
+  const buffReveal       = $('#buff-reveal');
+  const buffIconEl       = $('#buff-icon');
+  const buffNameEl       = $('#buff-name');
+  const buffDescEl       = $('#buff-desc');
+  const buffScoreEl      = $('#buff-score');
+  const waitingOthers    = $('#waiting-others');
 
-  const buffReveal    = $('#buff-reveal');
-  const buffCard      = $('#buff-card');
-  const buffIcon      = $('#buff-icon');
-  const buffName      = $('#buff-name');
-  const buffDesc      = $('#buff-desc');
-  const buffScore     = $('#buff-score');
-  const waitingOthers = $('#waiting-others');
+  // Result
+  const rankingList = $('#ranking-list');
+  const loserNameEl = $('#loser-name');
+  const ownerReset  = $('#owner-reset');
+  const resetBtn    = $('#reset-btn');
+  const backToLobbyBtn = $('#back-to-lobby-btn');
 
-  const rankingList   = $('#ranking-list');
-  const loserName     = $('#loser-name');
-  const ownerReset    = $('#owner-reset');
-  const resetBtn      = $('#reset-btn');
   const toastContainer = $('#toast-container');
 
-  // ===================== Supabase 初始化 =====================
-  const supabase = window.supabase.createClient(
-    SUPABASE_CONFIG.url,
-    SUPABASE_CONFIG.key
-  );
+  // ===================== Supabase =====================
+  const supabase = window.supabase.createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.key);
 
-  // ===================== 状态 =====================
-  let playerToken   = null;   // 本机唯一标识
-  let playerName    = null;   // 本机选手名
-  let playerRecord  = null;   // 本机在数据库中的记录
-  let isOwner       = false;  // 是否是房主
-  let roomId        = null;   // 房间 ID（ISO 周）
-  let clickCount    = 0;      // 本地点击数
-  let gameActive    = false;  // 游戏是否进行中
-  let gameFinished  = false;  // 本机是否已结算
-  let buffResult    = null;   // Buff 结算结果
-  let realtimeChannel = null; // Supabase Realtime channel
-  let allPlayers    = [];     // 缓存所有玩家数据
+  // ===================== 全局状态 =====================
+  let playerToken = null;
+  let myProfile   = null; // { nickname, avatar_b64 }
+  let myUserRecord = null;
+  let roomId      = null;
+  let currentRoom = null;  // 当前所在房间对象
+  let isRoomOwner = false;
+
+  // 游戏状态
+  let clickCount   = 0;
+  let gameActive   = false;
+  let gameFinished = false;
+  let allPlayers   = [];
+  let gamePlayerRecord = null;
+
+  // 大厅状态
+  let onlineUsers  = [];
+  let lobbyRooms   = [];
+  let selectedTarget = null;
+  let lastItemTime = 0;
+  let pollInterval = null;
+  let lobbyUsersInterval = null;
+
+  // Realtime channels
+  let lobbyChannel    = null;
+  let gameChannel     = null;
 
   // ===================== 工具函数 =====================
-
-  /** 获取当前 ISO 周编号 作为 room_id */
-  function getRoomId() {
-    const now = new Date();
-    const d = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
-    const dayNum = d.getUTCDay() || 7;
-    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-    const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
-    return d.getUTCFullYear() + '-W' + weekNo;
-  }
-
-  /** 生成 UUID v4 */
-  function generateUUID() {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-      const r = Math.random() * 16 | 0;
-      const v = c === 'x' ? r : (r & 0x3 | 0x8);
-      return v.toString(16);
-    });
-  }
-
-  /** Toast 通知 */
-  function showToast(message, type) {
+  function showToast(msg, type) {
     type = type || 'error';
     const el = document.createElement('div');
     el.className = 'toast ' + type;
-    el.textContent = message;
+    el.textContent = msg;
     toastContainer.appendChild(el);
-    setTimeout(function () {
-      if (el.parentNode) el.parentNode.removeChild(el);
-    }, 5000);
+    setTimeout(() => { if (el.parentNode) el.remove(); }, 5000);
   }
 
-  /** 设置按钮 Loading 状态 */
-  function setBtnLoading(btn, loading, text) {
-    if (loading) {
-      btn.disabled = true;
-      btn.dataset.originalText = btn.textContent;
-      btn.textContent = text || '同步中...';
-      btn.style.opacity = '0.6';
-    } else {
-      btn.disabled = false;
-      btn.textContent = btn.dataset.originalText || btn.textContent;
-      btn.style.opacity = '1';
-    }
-  }
-
-  /** 切换视图 */
-  function switchView(viewName) {
-    waitingView.classList.remove('active');
-    gameView.classList.remove('active');
-    resultView.classList.remove('active');
-
-    if (viewName === 'waiting')  waitingView.classList.add('active');
-    if (viewName === 'game')     gameView.classList.add('active');
-    if (viewName === 'result')   resultView.classList.add('active');
-  }
-
-  /** 锁定加入表单（已加入状态） */
-  function lockJoinForm(name) {
-    nameInput.disabled = true;
-    nameInput.value = name;
-    nameInput.style.opacity = '0.6';
-    nameInput.style.borderColor = 'var(--neon-purple)';
-    nameInput.style.boxShadow = '0 0 8px rgba(168,85,247,0.3)';
-    joinBtn.disabled = true;
-    joinBtn.textContent = '✅ 已就位';
-    joinBtn.style.opacity = '0.7';
-  }
-
-  /** 解除加入表单锁定 */
-  function unlockJoinForm() {
-    nameInput.disabled = false;
-    nameInput.value = '';
-    nameInput.style.opacity = '1';
-    nameInput.style.borderColor = 'var(--border-color)';
-    nameInput.style.boxShadow = 'none';
-    joinBtn.disabled = false;
-    joinBtn.textContent = '加入战场';
-    joinBtn.style.opacity = '1';
-  }
-
-  // ===================== Supabase 操作 =====================
-
-  /** 获取房间所有玩家 */
-  async function fetchPlayers() {
-    try {
-      const { data, error } = await supabase
-        .from('players')
-        .select('*')
-        .eq('room_id', roomId)
-        .order('created_at', { ascending: true });
-
-      if (error) throw error;
-      allPlayers = data || [];
-      return allPlayers;
-    } catch (err) {
-      console.error('获取玩家列表失败:', err);
-      showToast('网络异常，请检查连接后刷新重试');
-      return [];
-    }
-  }
-
-  /** 加入游戏 */
-  async function joinGame(name) {
-    try {
-      const { data, error } = await supabase
-        .from('players')
-        .insert({
-          room_id: roomId,
-          name: name,
-          player_token: playerToken,
-          click_count: 0,
-          final_score: 0,
-          is_finished: false,
-          is_owner: false,
-          game_started: false
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-      playerRecord = data;
-      return data;
-    } catch (err) {
-      console.error('加入失败:', err);
-      if (err.code === '23505') {
-        showToast('换个响亮的名号！', 'error');
-      } else {
-        showToast('网络异常，请检查连接后刷新重试');
-      }
-      return null;
-    }
-  }
-
-  /** 设置房主 */
-  async function setOwner(record) {
-    try {
-      const { error } = await supabase
-        .from('players')
-        .update({ is_owner: true })
-        .eq('id', record.id)
-        .eq('player_token', playerToken);
-
-      if (error) throw error;
-    } catch (err) {
-      console.error('设置房主失败:', err);
-    }
-  }
-
-  /** 开始游戏（房主操作） */
-  async function startGame() {
-    try {
-      const { error } = await supabase
-        .from('players')
-        .update({ game_started: true })
-        .eq('id', playerRecord.id)
-        .eq('player_token', playerToken);
-
-      if (error) throw error;
-
-      // 同时更新所有玩家的 game_started
-      await supabase
-        .from('players')
-        .update({ game_started: true })
-        .eq('room_id', roomId)
-        .eq('is_owner', true);
-
-      return true;
-    } catch (err) {
-      console.error('开始游戏失败:', err);
-      showToast('网络异常，请检查连接后刷新重试');
-      return false;
-    }
-  }
-
-  /** 提交分数 */
-  async function submitScore(clickCount, buff, finalScore) {
-    try {
-      const { error } = await supabase
-        .from('players')
-        .update({
-          click_count: clickCount,
-          buff: buff,
-          final_score: finalScore,
-          is_finished: true
-        })
-        .eq('id', playerRecord.id)
-        .eq('player_token', playerToken);
-
-      if (error) throw error;
-      gameFinished = true;
-      return true;
-    } catch (err) {
-      console.error('提交分数失败:', err);
-      showToast('网络异常，提交失败，请检查连接后刷新重试');
-      return false;
-    }
-  }
-
-  /** 清空当前房间（房主操作） */
-  async function resetRoom() {
-    try {
-      const { error } = await supabase
-        .from('players')
-        .delete()
-        .eq('room_id', roomId);
-
-      if (error) throw error;
-
-      // 重置本地状态
-      clickCount = 0;
-      gameActive = false;
-      gameFinished = false;
-      buffResult = null;
-      playerRecord = null;
-      isOwner = false;
-      allPlayers = [];
-
-      clickScoreDisplay.textContent = '0';
-      clickBtn.disabled = false;
-      buffReveal.style.display = 'none';
-      clickArea.style.display = 'none';
-      countdownDisplay.style.display = 'block';
-      countdownLabel.style.display = 'block';
-      countdownDisplay.textContent = '10';
-      countdownDisplay.className = 'countdown-display';
-
-      // 解锁加入表单
-      unlockJoinForm();
-
-      // 重新开始轮询
-      startPolling();
-
-      return true;
-    } catch (err) {
-      console.error('重置失败:', err);
-      showToast('网络异常，请检查连接后刷新重试');
-      return false;
-    }
-  }
-
-  // ===================== 实时同步 =====================
-
-  let pollInterval = null; // 轮询定时器（Realtime 不可用时的后备方案）
-
-  /** 启动轮询（后备方案） */
-  function startPolling() {
-    if (pollInterval) return;
-    pollInterval = setInterval(async function () {
-      try {
-        const fresh = await supabase
-          .from('players')
-          .select('*')
-          .eq('room_id', roomId)
-          .order('created_at', { ascending: true });
-        if (fresh.error) return;
-        const newData = fresh.data || [];
-
-        // 检测变化
-        const oldLen = allPlayers.length;
-        const newLen = newData.length;
-        const hasChanges = oldLen !== newLen || newData.some(function (np) {
-          const op = allPlayers.find(function (p) { return p.id === np.id; });
-          if (!op) return true;
-          return op.game_started !== np.game_started || op.is_finished !== np.is_finished;
-        });
-
-        if (hasChanges) {
-          allPlayers = newData;
-          if (waitingView.classList.contains('active')) {
-            renderPlayerList();
-            // 检查是否需要显示房主按钮
-            const self = allPlayers.find(function (p) { return p.player_token === playerToken; });
-            if (self && self.is_owner && !isOwner) {
-              isOwner = true;
-              playerRecord = self;
-              ownerActions.style.display = 'block';
-            }
-          }
-          // 检测游戏开始
-          const started = newData.some(function (p) { return p.game_started; });
-          if (started && !gameActive && !gameFinished && playerRecord && !playerRecord.is_finished) {
-            gameActive = true;
-            enterGamePhase();
-          }
-          // 检测所有人完成
-          const allDone = newData.length > 0 && newData.every(function (p) { return p.is_finished; });
-          if (allDone && gameFinished) {
-            showResults();
-          }
-        }
-      } catch (e) {
-        // 静默处理
-      }
-    }, 2000);
-  }
-
-  /** 停止轮询 */
-  function stopPolling() {
-    if (pollInterval) {
-      clearInterval(pollInterval);
-      pollInterval = null;
-    }
-  }
-
-  /** 设置 Supabase Realtime 订阅 */
-  function setupRealtime() {
-    if (realtimeChannel) {
-      supabase.removeChannel(realtimeChannel);
-    }
-
-    realtimeChannel = supabase
-      .channel('room-' + roomId)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'players',
-          filter: 'room_id=eq.' + roomId
-        },
-        function (payload) {
-          handleRealtimeChange(payload);
-        }
-      )
-      .subscribe(function (status) {
-        console.log('Realtime 订阅状态:', status);
-      });
-  }
-
-  /** 处理实时数据变更 */
-  function handleRealtimeChange(payload) {
-    if (payload.eventType === 'INSERT') {
-      handlePlayerInsert(payload.new);
-    } else if (payload.eventType === 'UPDATE') {
-      handlePlayerUpdate(payload.new);
-    } else if (payload.eventType === 'DELETE') {
-      handlePlayerDelete(payload.old);
-    }
-  }
-
-  function handlePlayerInsert(record) {
-    // 更新本地缓存
-    const idx = allPlayers.findIndex(function (p) { return p.id === record.id; });
-    if (idx === -1) {
-      allPlayers.push(record);
-    } else {
-      allPlayers[idx] = record;
-    }
-
-    // 如果当前在等待区，刷新列表
-    if (waitingView.classList.contains('active')) {
-      renderPlayerList();
-    }
-
-    // 如果是本人刚加入，更新 playerRecord
-    if (record.player_token === playerToken && !playerRecord) {
-      playerRecord = record;
-    }
-  }
-
-  function handlePlayerUpdate(record) {
-    // 更新缓存
-    const idx = allPlayers.findIndex(function (p) { return p.id === record.id; });
-    if (idx !== -1) {
-      allPlayers[idx] = record;
-    } else {
-      allPlayers.push(record);
-    }
-
-    // 如果是本人的记录更新
-    if (record.player_token === playerToken) {
-      playerRecord = record;
-    }
-
-    // 检测游戏是否开始
-    if (record.game_started && !gameActive && !gameFinished) {
-      // 有人开始了游戏
-      gameActive = true;
-      enterGamePhase();
-    }
-
-    // 刷新等待区列表
-    if (waitingView.classList.contains('active')) {
-      renderPlayerList();
-    }
-
-    // 检测是否所有玩家都已完成
-    if (resultView.classList.contains('active') || gameFinished) {
-      checkAllFinished();
-    }
-
-    // 如果在等待区且 game_started 了但还没进入游戏
-    if (waitingView.classList.contains('active') && record.game_started) {
-      gameActive = true;
-      enterGamePhase();
-    }
-  }
-
-  function handlePlayerDelete(record) {
-    allPlayers = allPlayers.filter(function (p) { return p.id !== record.id; });
-    if (waitingView.classList.contains('active')) {
-      renderPlayerList();
-    }
-  }
-
-  /** 检查是否所有玩家都已完成 */
-  async function checkAllFinished() {
-    // 重新获取最新数据
-    await fetchPlayers();
-
-    const allDone = allPlayers.length > 0 && allPlayers.every(function (p) { return p.is_finished; });
-
-    if (allDone) {
-      showResults();
-    } else if (gameFinished) {
-      // 本人已完成但还有人在进行中
-      waitingOthers.style.display = 'block';
-    }
-  }
-
-  // ===================== UI 渲染 =====================
-
-  /** 渲染选手列表 */
-  function renderPlayerList() {
-    playerList.innerHTML = '';
-
-    if (allPlayers.length === 0) {
-      playerList.innerHTML = '<p class="empty-hint">虚位以待，等你登场...</p>';
-    } else {
-      allPlayers.forEach(function (p) {
-        const tag = document.createElement('span');
-        tag.className = 'player-tag';
-        if (p.is_owner) {
-          tag.classList.add('owner-tag');
-          tag.innerHTML = '<span class="crown">👑</span>' + escapeHTML(p.name);
-        } else {
-          tag.innerHTML = '⚔️ ' + escapeHTML(p.name);
-        }
-        playerList.appendChild(tag);
-      });
-    }
-
-    playerCount.textContent = allPlayers.length;
-  }
-
-  /** 渲染排名 */
-  function renderRanking() {
-    rankingList.innerHTML = '';
-
-    // 按 final_score 降序排列
-    const sorted = allPlayers.slice().sort(function (a, b) {
-      return b.final_score - a.final_score;
+  function generateUUID() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+      const r = Math.random() * 16 | 0;
+      return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
     });
-
-    const medals = ['🥇', '🥈', '🥉'];
-
-    sorted.forEach(function (p, idx) {
-      const div = document.createElement('div');
-      div.className = 'rank-item';
-
-      // 最后一名特殊标记
-      if (idx === sorted.length - 1 && sorted.length > 1) {
-        div.classList.add('last-place');
-      }
-
-      const rankNum = idx + 1;
-      const medal = idx < 3 ? medals[idx] : '';
-      const buffEmoji = getBuffEmoji(p.buff);
-
-      div.innerHTML =
-        '<span class="rank-badge">' + medal + ' #' + rankNum + '</span>' +
-        '<div class="rank-info">' +
-          '<div class="rank-name">' + escapeHTML(p.name) + '</div>' +
-          '<div class="rank-buff">' + buffEmoji + ' ' + escapeHTML(p.buff || '无Buff') + ' | 点击' + p.click_count + '次</div>' +
-        '</div>' +
-        '<span class="rank-score">' + p.final_score + '分</span>';
-
-      rankingList.appendChild(div);
-    });
-
-    // 设置垫底名字
-    if (sorted.length > 0) {
-      loserName.textContent = sorted[sorted.length - 1].name;
-    }
-  }
-
-  function getBuffEmoji(buff) {
-    if (!buff) return '🛡️';
-    if (buff.indexOf('火箭') !== -1) return '🚀';
-    if (buff.indexOf('哑弹') !== -1) return '💣';
-    if (buff.indexOf('精准') !== -1) return '🎯';
-    return '🛡️';
   }
 
   function escapeHTML(str) {
-    if (!str) return '';
     const div = document.createElement('div');
-    div.textContent = str;
+    div.textContent = str || '';
     return div.innerHTML;
   }
 
-  // ===================== 游戏核心流程 =====================
+  function switchView(name) {
+    [profileView, lobbyView, waitingView, gameView, resultView].forEach(v => v.classList.remove('active'));
+    if (name === 'profile') profileView.classList.add('active');
+    if (name === 'lobby')   lobbyView.classList.add('active');
+    if (name === 'waiting') waitingView.classList.add('active');
+    if (name === 'game')    gameView.classList.add('active');
+    if (name === 'result')  resultView.classList.add('active');
+  }
 
-  /** 进入游戏阶段 */
+  // ===================== 个人资料 =====================
+  let avatarBase64 = '';
+
+  avatarPreview.addEventListener('click', () => avatarInput.click());
+
+  avatarInput.addEventListener('change', async () => {
+    const file = avatarInput.files[0];
+    if (!file) return;
+    avatarBase64 = await compressAvatar(file);
+    avatarPreview.innerHTML = `<img src="${avatarBase64}" alt="avatar">`;
+  });
+
+  function compressAvatar(file) {
+    return new Promise(resolve => {
+      const reader = new FileReader();
+      reader.onload = e => {
+        const img = new Image();
+        img.onload = () => {
+          const size = 60;
+          const canvas = document.createElement('canvas');
+          canvas.width = size; canvas.height = size;
+          const ctx = canvas.getContext('2d');
+          ctx.beginPath();
+          ctx.arc(size/2, size/2, size/2, 0, Math.PI*2);
+          ctx.clip();
+          ctx.drawImage(img, 0, 0, size, size);
+          resolve(canvas.toDataURL('image/jpeg', 0.5));
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  nicknameInput.addEventListener('input', () => {
+    const len = nicknameInput.value.length;
+    nicknameCount.textContent = len;
+    profileSaveBtn.disabled = len === 0;
+  });
+
+  profileSaveBtn.addEventListener('click', async () => {
+    const nick = nicknameInput.value.trim();
+    if (!nick) return showToast('请输入昵称');
+    profileSaveBtn.disabled = true;
+    profileSaveBtn.textContent = '保存中...';
+
+    // 检查昵称唯一
+    const { data: exist } = await supabase.from('users').select('id').eq('nickname', nick).neq('player_token', playerToken).limit(1);
+    if (exist && exist.length > 0) {
+      showToast('这名号被人占了，换一个！');
+      profileSaveBtn.disabled = false;
+      profileSaveBtn.textContent = '进入大厅';
+      return;
+    }
+
+    // Upsert
+    const { data, error } = await supabase.from('users').upsert({
+      nickname: nick,
+      avatar_b64: avatarBase64,
+      player_token: playerToken,
+      is_online: true,
+      last_seen: new Date().toISOString()
+    }, { onConflict: 'player_token' }).select().single();
+
+    if (error) {
+      showToast('保存失败，重试一下');
+      profileSaveBtn.disabled = false;
+      profileSaveBtn.textContent = '进入大厅';
+      return;
+    }
+
+    myProfile = { nickname: nick, avatar_b64: avatarBase64 };
+    myUserRecord = data;
+    localStorage.setItem('profile_nickname', nick);
+    localStorage.setItem('profile_avatar', avatarBase64);
+    enterLobby();
+  });
+
+  // ===================== 大厅 =====================
+  async function enterLobby() {
+    stopAllIntervals();
+    switchView('lobby');
+
+    // 显示自己的头像昵称
+    myAvatarSmall.innerHTML = myProfile.avatar_b64 ? `<img src="${myProfile.avatar_b64}">` : '';
+    myNicknameDisp.textContent = myProfile.nickname;
+
+    // 标记在线
+    await supabase.from('users').update({ is_online: true, last_seen: new Date().toISOString() }).eq('player_token', playerToken);
+
+    // 加载数据
+    await Promise.all([fetchOnlineUsers(), fetchLobbyRooms()]);
+    renderLobbyUsers();
+    renderLobbyRooms();
+
+    // 启动实时 & 轮询
+    setupLobbyRealtime();
+    lobbyUsersInterval = setInterval(() => {
+      fetchOnlineUsers().then(() => renderLobbyUsers());
+      fetchLobbyRooms().then(() => renderLobbyRooms());
+    }, 5000);
+  }
+
+  async function fetchOnlineUsers() {
+    const { data } = await supabase.from('users').select('*').eq('is_online', true).order('nickname');
+    onlineUsers = data || [];
+    return onlineUsers;
+  }
+
+  async function fetchLobbyRooms() {
+    const { data } = await supabase.from('rooms').select('*').eq('is_active', true).order('created_at', { ascending: false });
+    lobbyRooms = data || [];
+    // 为每个房间附加人数
+    for (const room of lobbyRooms) {
+      const { count } = await supabase.from('room_members').select('*', { count: 'exact', head: true }).eq('room_id', room.id);
+      room._memberCount = count || 0;
+    }
+    return lobbyRooms;
+  }
+
+  function renderLobbyUsers() {
+    const existing = {};
+    lobbyStage.querySelectorAll('.float-avatar').forEach(el => {
+      const token = el.dataset.token;
+      existing[token] = { el, x: parseFloat(el.style.left), y: parseFloat(el.style.top) };
+    });
+
+    const currentTokens = new Set(onlineUsers.filter(u => u.player_token !== playerToken).map(u => u.player_token));
+    const stageW = lobbyStage.clientWidth || 500;
+    const stageH = lobbyStage.clientHeight || 300;
+
+    // 移除已下线的
+    Object.keys(existing).forEach(token => {
+      if (!currentTokens.has(token)) existing[token].el.remove();
+    });
+
+    // 添加/更新在线用户
+    onlineUsers.forEach(user => {
+      if (user.player_token === playerToken) return;
+      let existingEl = existing[user.player_token];
+      if (!existingEl) {
+        const div = document.createElement('div');
+        div.className = 'float-avatar';
+        div.dataset.token = user.player_token;
+        div.style.left = (30 + Math.random() * (stageW - 100)) + 'px';
+        div.style.top = (20 + Math.random() * (stageH - 100)) + 'px';
+        div.innerHTML = `
+          <div class="avatar-circle">${user.avatar_b64 ? `<img src="${user.avatar_b64}">` : ''}</div>
+          <span class="avatar-nick">${escapeHTML(user.nickname)}</span>`;
+        div.addEventListener('click', () => openItemPopup(user));
+        lobbyStage.appendChild(div);
+      } else {
+        existingEl.el.querySelector('.avatar-nick').textContent = user.nickname;
+      }
+    });
+
+    // 随机移动
+    setTimeout(() => {
+      lobbyStage.querySelectorAll('.float-avatar').forEach(el => {
+        if (Math.random() > 0.3) {
+          el.style.left = (20 + Math.random() * (stageW - 100)) + 'px';
+          el.style.top = (20 + Math.random() * (stageH - 100)) + 'px';
+        }
+      });
+    }, 100);
+  }
+
+  function renderLobbyRooms() {
+    if (lobbyRooms.length === 0) {
+      roomList.innerHTML = '<p class="empty-hint" style="font-size:.75rem;padding:12px 0">暂无房间</p>';
+      return;
+    }
+    roomList.innerHTML = lobbyRooms.map(r => `
+      <div class="room-card" data-room-id="${r.id}">
+        <div class="room-name">${escapeHTML(r.name)}</div>
+        <div class="room-info">${r._memberCount || 0} 人</div>
+      </div>
+    `).join('');
+
+    roomList.querySelectorAll('.room-card').forEach(card => {
+      card.addEventListener('click', () => joinRoom(card.dataset.roomId));
+    });
+  }
+
+  // 创建房间
+  createRoomBtn.addEventListener('click', () => {
+    roomCreateForm.style.display = roomCreateForm.style.display === 'none' ? 'flex' : 'none';
+  });
+
+  roomCreateConfirm.addEventListener('click', async () => {
+    const name = roomNameInput.value.trim();
+    if (!name) return showToast('输入房间名');
+    roomCreateConfirm.disabled = true;
+    const { data, error } = await supabase.from('rooms').insert({
+      name, creator_token: playerToken, is_active: true
+    }).select().single();
+    if (error) { showToast('创建失败'); roomCreateConfirm.disabled = false; return; }
+
+    // 自动加入
+    await supabase.from('room_members').insert({ room_id: data.id, user_token: playerToken, is_owner: true });
+    roomCreateForm.style.display = 'none';
+    roomNameInput.value = '';
+    roomCreateConfirm.disabled = false;
+    currentRoom = data;
+    isRoomOwner = true;
+    enterWaitingRoom(data);
+  });
+
+  // 加入房间
+  async function joinRoom(roomId) {
+    const { data: room } = await supabase.from('rooms').select('*').eq('id', roomId).single();
+    if (!room) return showToast('房间不存在');
+    // 检查是否已加入
+    const { data: existing } = await supabase.from('room_members').select('*').eq('room_id', roomId).eq('user_token', playerToken);
+    if (existing && existing.length === 0) {
+      const { error } = await supabase.from('room_members').insert({ room_id: roomId, user_token: playerToken, is_owner: false });
+      if (error) { showToast('加入失败'); return; }
+    }
+    currentRoom = room;
+    isRoomOwner = room.creator_token === playerToken;
+    enterWaitingRoom(room);
+  }
+
+  // 进入等待室
+  function enterWaitingRoom(room) {
+    stopAllIntervals();
+    currentRoom = room;
+    roomId = room.id;
+    switchView('waiting');
+    waitingRoomTitle.textContent = '⚔️ ' + room.name;
+    roomSubtitle.textContent = isRoomOwner ? '你是房主，等人齐就能开始！' : '等待房主开始...';
+    if (isRoomOwner) ownerActions.style.display = 'block';
+    else ownerActions.style.display = 'none';
+    allPlayers = [];
+    gameActive = false; gameFinished = false;
+    fetchWaitingPlayers();
+    setupGameRealtime();
+    pollInterval = setInterval(fetchWaitingPlayers, 2000);
+    renderPlayerListUI();
+  }
+
+  async function fetchWaitingPlayers() {
+    const { data: members } = await supabase.from('room_members').select('*').eq('room_id', roomId);
+    const tokens = (members || []).map(m => m.user_token);
+    const { data: users } = await supabase.from('users').select('*').in('player_token', tokens);
+    allPlayers = (users || []).map(u => ({
+      id: u.id, name: u.nickname, player_token: u.player_token,
+      click_count: 0, buff: '', final_score: 0, is_finished: false,
+      is_owner: u.player_token === currentRoom.creator_token,
+      game_started: false
+    }));
+    renderPlayerListUI();
+    playerCountEl.textContent = allPlayers.length;
+    if (isRoomOwner) ownerActions.style.display = 'block';
+  }
+
+  function renderPlayerListUI() {
+    if (allPlayers.length === 0) {
+      playerListEl.innerHTML = '<p class="empty-hint">虚位以待...</p>';
+      return;
+    }
+    playerListEl.innerHTML = allPlayers.map(p =>
+      `<span class="player-tag${p.is_owner ? ' owner-tag' : ''}">${p.is_owner ? '👑 ' : '⚔️ '}${escapeHTML(p.name)}</span>`
+    ).join('');
+  }
+
+  leaveRoomBtn.addEventListener('click', async () => {
+    await supabase.from('room_members').delete().eq('user_token', playerToken).eq('room_id', roomId);
+    if (isRoomOwner) await supabase.from('rooms').update({ is_active: false }).eq('id', roomId);
+    stopAllIntervals();
+    currentRoom = null; isRoomOwner = false; roomId = null; allPlayers = [];
+    enterLobby();
+  });
+
+  // ===================== 游戏（保留原逻辑，适配新流程）=====================
+  startBtn.addEventListener('click', async () => {
+    if (!isRoomOwner) return;
+    if (allPlayers.length < 2) return showToast('至少 2 人才能开始！');
+
+    // 把 room_members 同步到 players 表
+    for (const p of allPlayers) {
+      await supabase.from('players').upsert({
+        room_id: roomId, name: p.name, player_token: p.player_token,
+        click_count: 0, buff: '', final_score: 0, is_finished: false,
+        is_owner: p.is_owner, game_started: true
+      }, { onConflict: 'player_token,room_id' });
+    }
+    gameActive = true;
+    enterGamePhase();
+  });
+
   function enterGamePhase() {
-    stopPolling();
+    stopAllIntervals();
     switchView('game');
-
-    // 显示预备倒计时
     countdownDisplay.style.display = 'block';
     countdownLabel.style.display = 'block';
     clickArea.style.display = 'none';
     buffReveal.style.display = 'none';
-
+    clickCount = 0;
+    gameActive = true;
+    gameFinished = false;
+    clickScoreDisplay.textContent = '0';
+    clickBtn.disabled = false;
     startPrepCountdown();
   }
 
-  /** 预备倒计时 3-2-1 */
   function startPrepCountdown() {
-    let prepCount = COUNTDOWN_PREP;
-    countdownDisplay.textContent = prepCount;
-    countdownLabel.textContent = '全军出击！';
+    let prep = COUNTDOWN_PREP;
+    countdownDisplay.textContent = prep;
     countdownDisplay.className = 'countdown-display';
-
-    const prepInterval = setInterval(function () {
-      prepCount--;
-      if (prepCount <= 0) {
-        clearInterval(prepInterval);
-        countdownDisplay.textContent = 'GO!';
-        countdownDisplay.className = 'countdown-display go';
-        countdownLabel.textContent = '疯狂点击！';
-        setTimeout(function () {
-          startMainCountdown();
-        }, 500);
-      } else {
-        countdownDisplay.textContent = prepCount;
-      }
+    countdownLabel.textContent = '全军出击！';
+    const iv = setInterval(() => {
+      prep--;
+      if (prep <= 0) { clearInterval(iv); countdownDisplay.textContent='GO!'; countdownDisplay.className='countdown-display go'; countdownLabel.textContent='疯狂点击！'; setTimeout(startMainCountdown,500); }
+      else countdownDisplay.textContent = prep;
     }, 800);
   }
 
-  /** 主倒计时 10 秒 */
   function startMainCountdown() {
     countdownDisplay.textContent = COUNTDOWN_SECONDS;
     countdownDisplay.className = 'countdown-display';
     clickArea.style.display = 'flex';
-    clickBtn.disabled = false;
-    gameActive = true;
-    clickCount = 0;
-    clickScoreDisplay.textContent = '0';
-
     let remaining = COUNTDOWN_SECONDS;
-
-    const countdownInterval = setInterval(function () {
+    const iv = setInterval(() => {
       remaining--;
       countdownDisplay.textContent = remaining;
-
-      if (remaining <= 0) {
-        clearInterval(countdownInterval);
-        endClickPhase();
-      }
+      if (remaining <= 0) { clearInterval(iv); endClickPhase(); }
     }, 1000);
   }
 
-  /** 结束点击阶段 */
   function endClickPhase() {
     gameActive = false;
     clickBtn.disabled = true;
     countdownDisplay.textContent = '0';
     countdownDisplay.className = 'countdown-display';
     countdownLabel.textContent = '时间到！';
-
-    // 隐藏倒计时和点击区域
-    setTimeout(function () {
+    setTimeout(() => {
       countdownDisplay.style.display = 'none';
       countdownLabel.style.display = 'none';
       clickArea.style.display = 'none';
-
-      // 计算并展示 Buff
       calculateAndRevealBuff();
     }, 800);
   }
 
-  /** 处理点击 */
   function handleClick(e) {
     if (!gameActive) return;
-
     clickCount++;
     clickScoreDisplay.textContent = clickCount;
-
-    // 飘出 +1 动画
     spawnFloatPlus(e);
   }
 
-  /** 生成飘出 +1 */
   function spawnFloatPlus(e) {
     const el = document.createElement('span');
     el.className = 'float-plus';
     el.textContent = '+1';
-
-    // 随机颜色
-    const colors = ['#a855f7', '#06b6d4', '#ec4899', '#fbbf24', '#22c55e'];
-    el.style.color = colors[Math.floor(Math.random() * colors.length)];
-
-    // 位置：如果有触摸事件用触摸坐标，否则用鼠标坐标
+    const colors = ['#a855f7','#06b6d4','#ec4899','#fbbf24','#22c55e'];
+    el.style.color = colors[Math.floor(Math.random()*colors.length)];
     let x, y;
-    if (e.touches && e.touches.length > 0) {
-      x = e.touches[0].clientX;
-      y = e.touches[0].clientY;
-    } else if (e.clientX !== undefined) {
-      x = e.clientX;
-      y = e.clientY;
-    } else {
-      // 回退到按钮中心
-      const rect = clickBtn.getBoundingClientRect();
-      x = rect.left + rect.width / 2;
-      y = rect.top + rect.height / 2;
-    }
-
-    el.style.left = (x - 20 + (Math.random() - 0.5) * 60) + 'px';
-    el.style.top  = (y - 10) + 'px';
-
+    if (e.touches && e.touches.length > 0) { x = e.touches[0].clientX; y = e.touches[0].clientY; }
+    else if (e.clientX !== undefined) { x = e.clientX; y = e.clientY; }
+    else { const rect = clickBtn.getBoundingClientRect(); x = rect.left+rect.width/2; y = rect.top+rect.height/2; }
+    el.style.left = (x-20+(Math.random()-.5)*60)+'px';
+    el.style.top = (y-10)+'px';
     document.body.appendChild(el);
-
-    // 动画结束后移除
-    setTimeout(function () {
-      if (el.parentNode) el.parentNode.removeChild(el);
-    }, 1200);
+    setTimeout(() => { if (el.parentNode) el.remove(); }, 1200);
   }
 
-  // ===================== Buff 系统 =====================
-
-  /** Buff 池 */
-  const BUFF_POOL = [
-    {
-      name: '🚀 火箭加速',
-      desc: '最终总分翻倍！',
-      icon: '🚀',
-      apply: function (score, allPlayers, selfRecord) {
-        return score * 2;
-      }
-    },
-    {
-      name: '💣 哑弹',
-      desc: '手滑了，扣5分...',
-      icon: '💣',
-      apply: function (score) {
-        return Math.max(0, score - 5);
-      }
-    },
-    {
-      name: '🎯 精准打击',
-      desc: '抢夺最低分选手的5分！',
-      icon: '🎯',
-      apply: function (score, allPlayers, selfRecord) {
-        // 找到当前房间内 click_count 最低的选手
-        const others = allPlayers.filter(function (p) { return p.id !== selfRecord.id; });
-        if (others.length === 0) return score;
-
-        let minClick = Infinity;
-        others.forEach(function (p) {
-          if (p.click_count < minClick) minClick = p.click_count;
-        });
-
-        if (score <= minClick) {
-          // 自己就是最低的，Buff 无效
-          return score;
-        }
-        return score + 5;
-      }
-    },
-    {
-      name: '🛡️ 无事发生',
-      desc: '风平浪静，维持原分。',
-      icon: '🛡️',
-      apply: function (score) {
-        return score;
-      }
-    }
+  // Buff 系统
+  const BUFFS = [
+    { name:'🚀 火箭加速', desc:'总分翻倍！', icon:'🚀', fn: s=>s*2 },
+    { name:'💣 哑弹', desc:'扣5分...', icon:'💣', fn: s=>Math.max(0,s-5) },
+    { name:'🎯 精准打击', desc:'抢夺最低分5分', icon:'🎯', fn: (s,players,self)=>{ let min=Infinity; players.filter(p=>p.player_token!==self.player_token).forEach(p=>{if(p.click_count<min)min=p.click_count}); return s<=min?s:s+5 } },
+    { name:'🛡️ 无事发生', desc:'维持原分', icon:'🛡️', fn: s=>s },
   ];
 
-  /** 计算并展示 Buff */
-  function calculateAndRevealBuff() {
-    // 重新获取最新数据用于 Buff 计算
-    fetchPlayers().then(function () {
-      const buffIdx = Math.floor(Math.random() * BUFF_POOL.length);
-      const buff = BUFF_POOL[buffIdx];
-      const finalScore = buff.apply(clickCount, allPlayers, playerRecord);
+  async function calculateAndRevealBuff() {
+    const b = BUFFS[Math.floor(Math.random()*BUFFS.length)];
+    const finalScore = b.fn(clickCount, allPlayers, { player_token: playerToken });
+    buffIconEl.textContent = b.icon;
+    buffNameEl.textContent = b.name;
+    buffDescEl.textContent = b.desc;
+    buffScoreEl.textContent = finalScore+' 分';
+    buffReveal.style.display = 'flex';
+    waitingOthers.style.display = 'block';
 
-      buffResult = {
-        clickCount: clickCount,
-        buffName: buff.name,
-        buffIcon: buff.icon,
-        buffDesc: buff.desc,
-        finalScore: finalScore
-      };
-
-      // 展示 Buff 卡片
-      buffIcon.textContent = buff.icon;
-      buffName.textContent = buff.name;
-      buffDesc.textContent = buff.desc;
-      buffScore.textContent = finalScore + ' 分';
-      buffReveal.style.display = 'flex';
-      waitingOthers.style.display = 'block';
-
-      // 提交分数到数据库
-      submitScore(clickCount, buff.name, finalScore).then(function (ok) {
-        if (ok) {
-          waitingOthers.textContent = '等待其他选手结算...';
-          // 轮询检查是否所有人都完成了
-          pollForCompletion();
-        }
-      });
-    });
+    await supabase.from('players').update({ click_count:clickCount, buff:b.name, final_score:finalScore, is_finished:true }).eq('player_token',playerToken).eq('room_id',roomId);
+    gameFinished = true;
+    pollCompletion();
   }
 
-  /** 轮询检查所有人是否完成 */
-  function pollForCompletion() {
-    const maxPolls = 60; // 最多等 60 秒
+  function pollCompletion() {
     let polls = 0;
-
-    const interval = setInterval(function () {
+    const iv = setInterval(async () => {
       polls++;
-      fetchPlayers().then(function (players) {
-        const allDone = players.length > 0 && players.every(function (p) { return p.is_finished; });
-        if (allDone) {
-          clearInterval(interval);
-          showResults();
-        } else if (polls >= maxPolls) {
-          clearInterval(interval);
-          // 超时也显示结果
-          showResults();
-        }
-        // 更新等待文字
-        const doneCount = players.filter(function (p) { return p.is_finished; }).length;
-        waitingOthers.textContent = '已结算 ' + doneCount + '/' + players.length + ' 人，等待其他选手...';
-      });
+      const { data } = await supabase.from('players').select('*').eq('room_id', roomId);
+      const players = data || [];
+      const done = players.every(p => p.is_finished);
+      if (done || polls >= 60) { clearInterval(iv); showResults(players); }
+      else { const dc = players.filter(p=>p.is_finished).length; waitingOthers.textContent = `已结算 ${dc}/${players.length} 人...`; }
     }, 1000);
   }
 
-  /** 显示结果页 */
-  function showResults() {
-    stopPolling();
-    // 最终次获取数据确保完整
-    fetchPlayers().then(function () {
-      // 过滤掉未完成的 player（如果超时进入）
-      allPlayers = allPlayers.filter(function (p) { return p.is_finished; });
-      renderRanking();
-      switchView('result');
-
-      // 显示房主的重置按钮
-      if (isOwner) {
-        ownerReset.style.display = 'block';
-      }
-
-      gameActive = false;
-    });
+  function showResults(players) {
+    const sorted = (players||[]).filter(p=>p.is_finished).sort((a,b)=>b.final_score-a.final_score);
+    rankingList.innerHTML = sorted.map((p,i)=>{
+      const cls = i===sorted.length-1&&sorted.length>1?'rank-item last-place':'rank-item';
+      const medal = i<3?['🥇','🥈','🥉'][i]:'';
+      return `<div class="${cls}"><span class="rank-badge">${medal} #${i+1}</span><div class="rank-info"><div class="rank-name">${escapeHTML(p.name)}</div><div class="rank-buff">${p.buff||'无'} | ${p.click_count}次</div></div><span class="rank-score">${p.final_score}分</span></div>`;
+    }).join('');
+    if (sorted.length>0) loserNameEl.textContent = sorted[sorted.length-1].name;
+    switchView('result');
+    if (isRoomOwner) ownerReset.style.display = 'block';
+    else ownerReset.style.display = 'none';
   }
 
-  // ===================== 事件绑定 =====================
+  resetBtn.addEventListener('click', async () => {
+    if (!confirm('确定开启新一轮？')) return;
+    await supabase.from('players').delete().eq('room_id', roomId);
+    clickCount=0; gameActive=false; gameFinished=false;
+    enterWaitingRoom(currentRoom);
+  });
 
-  /** 加入按钮点击 */
-  joinBtn.addEventListener('click', async function () {
-    // 已经加入过：拒绝
-    if (playerRecord) {
-      showToast('你已经加入战场了！', 'error');
-      return;
-    }
+  backToLobbyBtn.addEventListener('click', () => {
+    stopAllIntervals();
+    enterLobby();
+  });
 
-    const name = nameInput.value.trim();
+  // ===================== 道具 & 弹幕 =====================
+  function openItemPopup(targetUser) {
+    if (targetUser.player_token === playerToken) return;
+    selectedTarget = targetUser;
+    itemTargetName.textContent = targetUser.nickname;
+    itemPopup.style.display = 'flex';
+  }
 
-    if (!name) {
-      showToast('请输入你的大名！', 'error');
-      nameInput.focus();
-      return;
-    }
+  itemPopupClose.addEventListener('click', () => { itemPopup.style.display = 'none'; selectedTarget = null; });
+  itemPopup.addEventListener('click', e => { if (e.target === itemPopup) { itemPopup.style.display = 'none'; selectedTarget = null; } });
 
-    // 检查是否已存在同名
-    const dup = allPlayers.find(function (p) {
-      return p.name === name;
+  itemPopup.querySelectorAll('.item-option').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const item = btn.dataset.item;
+      itemPopup.style.display = 'none';
+      throwItem(selectedTarget, item);
+      selectedTarget = null;
     });
-    if (dup) {
-      showToast('换个响亮的名号！', 'error');
-      return;
-    }
-
-    // 检查游戏是否已开始
-    const hasStarted = allPlayers.some(function (p) { return p.game_started; });
-    if (hasStarted) {
-      showToast('游戏已经开始，请等待下一轮！', 'error');
-      return;
-    }
-
-    setBtnLoading(joinBtn, true, '加入中...');
-    nameInput.disabled = true;
-
-    const wasFirst = allPlayers.length === 0; // 加入前就是空的 → 你将是第一人
-
-    const record = await joinGame(name);
-    if (record) {
-      playerName = name;
-      playerRecord = record;
-
-      // 第一个加入的 → 设为房主
-      if (wasFirst) {
-        await setOwner(record);
-        playerRecord.is_owner = true;
-        isOwner = true;
-        ownerActions.style.display = 'block';
-        await fetchPlayers();
-        renderPlayerList();
-      }
-
-      // 加入成功 → 锁定表单，显示已就位
-      setBtnLoading(joinBtn, false);
-      lockJoinForm(playerName);
-    } else {
-      nameInput.disabled = false;
-      setBtnLoading(joinBtn, false);
-    }
   });
 
-  /** 回车加入 */
-  nameInput.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') {
-      joinBtn.click();
-    }
+  // 底部道具按钮
+  itemPalette.querySelectorAll('.item-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const now = Date.now();
+      if (now - lastItemTime < ITEM_COOLDOWN) return showToast('道具冷却中，稍等几秒');
+      const target = onlineUsers.find(u => u.player_token !== playerToken);
+      if (!target) return showToast('大厅里没有其他人');
+      if (btn.dataset.item) throwItem(target, btn.dataset.item);
+    });
   });
 
-  /** 全军出击按钮 */
-  startBtn.addEventListener('click', async function () {
-    if (!isOwner) return;
-    if (allPlayers.length < 2) {
-      showToast('至少需要 2 名选手才能开始！', 'error');
-      return;
-    }
+  async function throwItem(target, itemType) {
+    const now = Date.now();
+    if (now - lastItemTime < ITEM_COOLDOWN) { showToast('冷却中...'); return; }
+    lastItemTime = now;
+    // 插入数据库（同步给其他人）
+    await supabase.from('lobby_items').insert({ from_token: playerToken, to_token: target.player_token, item_type: itemType });
+    // 本地动画
+    animateItemFly(target.player_token, itemType);
+    // 冷却 UI
+    itemPalette.querySelectorAll('.item-btn').forEach(b => b.classList.add('cooldown'));
+    setTimeout(() => itemPalette.querySelectorAll('.item-btn').forEach(b => b.classList.remove('cooldown')), ITEM_COOLDOWN);
+  }
 
-    setBtnLoading(startBtn, true, '出击中...');
-    const ok = await startGame();
-    if (ok) {
-      gameActive = true;
-      enterGamePhase();
-    }
-    setBtnLoading(startBtn, false);
-  });
+  function animateItemFly(toToken, itemType) {
+    const fromEl = myAvatarSmall;
+    const toEl = lobbyStage.querySelector(`[data-token="${toToken}"]`);
+    if (!toEl) return;
+    const fromR = fromEl.getBoundingClientRect();
+    const toR = toEl.getBoundingClientRect();
+    const emojis = { tomato:'🍅', bomb:'💣', rocket:'🚀', '666':'6️⃣6️⃣6️⃣' };
+    const fly = document.createElement('span');
+    fly.className = 'item-fly animate';
+    fly.textContent = emojis[itemType] || '💥';
+    fly.style.setProperty('--fly-dx', (toR.left - fromR.left) + 'px');
+    fly.style.setProperty('--fly-dy', (toR.top - fromR.top) + 'px');
+    fly.style.left = fromR.left + 'px';
+    fly.style.top = fromR.top + 'px';
+    document.body.appendChild(fly);
+    setTimeout(() => {
+      fly.remove();
+      // 命中效果
+      const hit = document.createElement('span');
+      hit.className = 'hit-effect';
+      hit.textContent = emojis[itemType] || '💥';
+      hit.style.left = (toR.left + toR.width/2) + 'px';
+      hit.style.top = (toR.top) + 'px';
+      document.body.appendChild(hit);
+      setTimeout(() => hit.remove(), 600);
+    }, 1000);
+  }
 
-  /** 点击按钮 — 同时绑定 touchstart 和 mousedown */
-  clickBtn.addEventListener('mousedown', function (e) {
-    e.preventDefault();
-    handleClick(e);
-  });
+  // 弹幕
+  commentSendBtn.addEventListener('click', sendComment);
+  commentInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendComment(); });
 
-  clickBtn.addEventListener('touchstart', function (e) {
-    e.preventDefault();
-    handleClick(e);
-  });
+  async function sendComment() {
+    const msg = commentInput.value.trim();
+    if (!msg) return;
+    commentInput.value = '';
+    await supabase.from('lobby_comments').insert({ from_token: playerToken, comment: msg });
+    showBarrageMsg(myProfile.nickname, msg);
+  }
 
-  /** 防止双击缩放 */
-  clickBtn.addEventListener('dblclick', function (e) {
-    e.preventDefault();
-  });
+  function showBarrageMsg(nick, msg) {
+    const el = document.createElement('span');
+    el.className = 'barrage-msg';
+    el.textContent = `${nick}: ${msg}`;
+    const top = Math.random() * 30 + 'px';
+    el.style.top = top;
+    const colors = ['var(--neon-cyan)','var(--neon-purple)','var(--neon-pink)','var(--gold)'];
+    el.style.color = colors[Math.floor(Math.random()*colors.length)];
+    barrageLayer.appendChild(el);
+    setTimeout(() => el.remove(), 6000);
+  }
 
-  /** 重置按钮 */
-  resetBtn.addEventListener('click', async function () {
-    if (!confirm('确定要开启新一轮吗？当前轮次的排名数据将被清除。')) return;
+  // ===================== Realtime =====================
+  function setupLobbyRealtime() {
+    if (lobbyChannel) supabase.removeChannel(lobbyChannel);
+    lobbyChannel = supabase.channel('lobby')
+      .on('postgres_changes', { event:'*', schema:'public', table:'lobby_items' }, payload => {
+        if (payload.eventType === 'INSERT' && payload.new.from_token !== playerToken) {
+          animateItemFly(payload.new.from_token, payload.new.item_type);
+        }
+      })
+      .on('postgres_changes', { event:'INSERT', schema:'public', table:'lobby_comments' }, payload => {
+        const u = onlineUsers.find(x => x.player_token === payload.new.from_token);
+        if (u) showBarrageMsg(u.nickname, payload.new.comment);
+      })
+      .subscribe();
+  }
 
-    setBtnLoading(resetBtn, true, '重置中...');
-    const ok = await resetRoom();
-    if (ok) {
-      switchView('waiting');
-      ownerActions.style.display = 'none';
-      ownerReset.style.display = 'none';
-      playerList.innerHTML = '<p class="empty-hint">虚位以待，等你登场...</p>';
-      playerCount.textContent = '0';
-    }
-    setBtnLoading(resetBtn, false);
-  });
+  function setupGameRealtime() {
+    if (gameChannel) supabase.removeChannel(gameChannel);
+    gameChannel = supabase.channel('game-'+roomId)
+      .on('postgres_changes', { event:'*', schema:'public', table:'players', filter: 'room_id=eq.'+roomId }, () => {
+        if (waitingView.classList.contains('active')) fetchWaitingPlayers().then(renderPlayerListUI);
+        else if (resultView.classList.contains('active')) {
+          supabase.from('players').select('*').eq('room_id',roomId).then(({data})=>{ if(data&&data.every(p=>p.is_finished)) showResults(data); });
+        }
+      })
+      .subscribe();
+  }
+
+  function stopAllIntervals() {
+    if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+    if (lobbyUsersInterval) { clearInterval(lobbyUsersInterval); lobbyUsersInterval = null; }
+  }
+
+  // ===================== 全局 Realtime 事件 =====================
+  clickBtn.addEventListener('mousedown', e => { e.preventDefault(); handleClick(e); });
+  clickBtn.addEventListener('touchstart', e => { e.preventDefault(); handleClick(e); });
+  clickBtn.addEventListener('dblclick', e => e.preventDefault());
 
   // ===================== 初始化 =====================
-
   async function init() {
-    // 获取或生成 playerToken
     playerToken = localStorage.getItem('player_token');
-    if (!playerToken) {
-      playerToken = generateUUID();
-      localStorage.setItem('player_token', playerToken);
-    }
+    if (!playerToken) { playerToken = generateUUID(); localStorage.setItem('player_token', playerToken); }
 
-    // 获取 roomId
-    roomId = getRoomId();
-    roomTitle.textContent = '🏆 ' + roomId + ' 主持权争夺战';
+    const savedNick = localStorage.getItem('profile_nickname');
+    const savedAvatar = localStorage.getItem('profile_avatar');
 
-    // 建立实时连接
-    setupRealtime();
-
-    // 开启轮询后备（确保 Realtime 未配置时也能同步）
-    startPolling();
-
-    // 获取当前房间数据
-    const players = await fetchPlayers();
-    renderPlayerList();
-
-    // 检查自己是否已在房间中
-    const self = players.find(function (p) { return p.player_token === playerToken; });
-    if (self) {
-      playerRecord = self;
-      playerName = self.name;
-      isOwner = self.is_owner;
-
-      if (isOwner) {
-        ownerActions.style.display = 'block';
-      }
-
-      // 检查游戏状态
-      if (self.game_started && !self.is_finished) {
-        // 游戏已开始但自己还没结算（刷新页面等场景）
-        gameActive = true;
-        enterGamePhase();
-      } else if (self.is_finished) {
-        // 自己已完成
-        gameFinished = true;
-        gameActive = false;
-        clickCount = self.click_count;
-        buffResult = {
-          clickCount: self.click_count,
-          buffName: self.buff,
-          buffIcon: getBuffEmoji(self.buff),
-          buffDesc: '',
-          finalScore: self.final_score
-        };
-        // 检查是否所有人完成
-        fetchPlayers().then(function () {
-          const allDone = allPlayers.every(function (p) { return p.is_finished; });
-          if (allDone) {
-            showResults();
-          } else {
-            // 显示等待状态
-            switchView('game');
-            clickArea.style.display = 'none';
-            countdownDisplay.style.display = 'none';
-            countdownLabel.style.display = 'none';
-            buffIcon.textContent = buffResult.buffIcon;
-            buffName.textContent = buffResult.buffName;
-            buffScore.textContent = buffResult.finalScore + ' 分';
-            buffReveal.style.display = 'flex';
-            waitingOthers.style.display = 'block';
-            pollForCompletion();
-          }
-        });
-      } else if (!self.game_started) {
-        // 游戏还没开始，检查是否有其他人开始了
-        const started = players.some(function (p) { return p.game_started; });
-        if (started) {
-          gameActive = true;
-          enterGamePhase();
-        } else {
-          // 已加入，等待房主开始 → 锁定表单
-          lockJoinForm(self.name);
-        }
-      }
-    }
-
-    // 如果自己是房主
-    if (isOwner) {
-      ownerActions.style.display = 'block';
-    }
-
-    // 检查游戏已开始的情况
-    if (!gameActive && !gameFinished) {
-      const hasStarted = players.some(function (p) { return p.game_started; });
-      if (hasStarted && playerRecord && !playerRecord.is_finished) {
-        gameActive = true;
-        enterGamePhase();
-      }
+    if (savedNick) {
+      myProfile = { nickname: savedNick, avatar_b64: savedAvatar || '' };
+      // 同步到数据库
+      await supabase.from('users').upsert({
+        nickname: savedNick, avatar_b64: savedAvatar || '',
+        player_token: playerToken, is_online: true, last_seen: new Date().toISOString()
+      }, { onConflict: 'player_token' });
+      enterLobby();
+    } else {
+      switchView('profile');
     }
   }
 
-  // 启动
   init();
 
-  // 页面卸载时清理
-  window.addEventListener('beforeunload', function () {
-    stopPolling();
-    if (realtimeChannel) {
-      supabase.removeChannel(realtimeChannel);
-    }
+  window.addEventListener('beforeunload', () => {
+    stopAllIntervals();
+    if (lobbyChannel) supabase.removeChannel(lobbyChannel);
+    if (gameChannel) supabase.removeChannel(gameChannel);
+    if (playerToken) supabase.from('users').update({ is_online: false }).eq('player_token', playerToken);
   });
 
 })();

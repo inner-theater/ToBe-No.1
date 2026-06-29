@@ -1,14 +1,72 @@
 -- ============================================================
--- 🏆 谁是第一名 - 主持权争夺战
--- Supabase 数据库建表 + RLS 安全策略
--- 请在 Supabase SQL Editor 中执行本文件
+--   谁是第一名 — 完整数据库 Schema
+--   请在 Supabase SQL Editor 一次性执行
 -- ============================================================
 
--- 启用 UUID 扩展
+-- 启用扩展
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- ============================================================
--- 1. 创建 players 表
+-- 1. 用户表（大厅用）
+-- ============================================================
+CREATE TABLE IF NOT EXISTS users (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  nickname     TEXT NOT NULL,
+  avatar_b64   TEXT DEFAULT '',
+  player_token TEXT NOT NULL UNIQUE,
+  is_online    BOOLEAN DEFAULT false,
+  last_seen    TIMESTAMPTZ DEFAULT now(),
+  created_at   TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_users_token ON users(player_token);
+
+-- ============================================================
+-- 2. 房间表
+-- ============================================================
+CREATE TABLE IF NOT EXISTS rooms (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name         TEXT NOT NULL,
+  creator_token TEXT NOT NULL,
+  is_active    BOOLEAN DEFAULT true,
+  created_at   TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_rooms_active ON rooms(is_active);
+
+-- ============================================================
+-- 3. 房间成员
+-- ============================================================
+CREATE TABLE IF NOT EXISTS room_members (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  room_id      UUID REFERENCES rooms(id) ON DELETE CASCADE,
+  user_token   TEXT NOT NULL,
+  is_owner     BOOLEAN DEFAULT false,
+  joined_at    TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_rm_room ON room_members(room_id);
+
+-- ============================================================
+-- 4. 大厅互动（扔道具）
+-- ============================================================
+CREATE TABLE IF NOT EXISTS lobby_items (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  from_token   TEXT NOT NULL,
+  to_token     TEXT NOT NULL,
+  item_type    TEXT NOT NULL,
+  created_at   TIMESTAMPTZ DEFAULT now()
+);
+
+-- ============================================================
+-- 5. 大厅弹幕 / 评论
+-- ============================================================
+CREATE TABLE IF NOT EXISTS lobby_comments (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  from_token   TEXT NOT NULL,
+  comment      TEXT NOT NULL,
+  created_at   TIMESTAMPTZ DEFAULT now()
+);
+
+-- ============================================================
+-- 6. 游戏玩家表
 -- ============================================================
 CREATE TABLE IF NOT EXISTS players (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -23,61 +81,41 @@ CREATE TABLE IF NOT EXISTS players (
   game_started  BOOLEAN DEFAULT false,
   created_at    TIMESTAMPTZ DEFAULT now()
 );
-
--- 索引：加速按房间和 token 查询
 CREATE INDEX IF NOT EXISTS idx_players_room_id ON players(room_id);
 CREATE INDEX IF NOT EXISTS idx_players_token  ON players(player_token);
 
 -- ============================================================
--- 2. 启用行级安全 (Row Level Security)
+-- 7. RLS 策略
 -- ============================================================
-ALTER TABLE players ENABLE ROW LEVEL SECURITY;
+ALTER TABLE users          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE rooms          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE room_members   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lobby_items    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lobby_comments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE players        ENABLE ROW LEVEL SECURITY;
 
--- ============================================================
--- 3. RLS 策略
--- ============================================================
-
--- 策略 1：允许任何人查询（SELECT）所有记录
-DROP POLICY IF EXISTS "Anyone can read players" ON players;
-CREATE POLICY "Anyone can read players" ON players
-  FOR SELECT
-  USING (true);
-
--- 策略 2：允许任何人插入（INSERT）新记录
--- 公开页面无法验证身份，允许插入
-DROP POLICY IF EXISTS "Anyone can insert players" ON players;
-CREATE POLICY "Anyone can insert players" ON players
-  FOR INSERT
-  WITH CHECK (true);
-
--- 策略 3：限制更新（UPDATE）—— 仅允许通过 player_token 匹配更新自己的记录
--- 由于 Supabase 匿名用户无 JWT 身份，安全校验在应用层（JS 端通过 WHERE player_token = ? 过滤）
--- 此处允许 UPDATE，但应用层确保只能更新匹配 player_token 的行
-DROP POLICY IF EXISTS "Players can update own record" ON players;
-CREATE POLICY "Players can update own record" ON players
-  FOR UPDATE
-  USING (true)
-  WITH CHECK (true);
-
--- 策略 4：允许删除（DELETE）—— 仅房主可删除
--- 同样由应用层校验
-DROP POLICY IF EXISTS "Owner can delete records" ON players;
-CREATE POLICY "Owner can delete records" ON players
-  FOR DELETE
-  USING (true);
-
--- ============================================================
--- 4. 辅助函数：安全地获取请求头中的 player_token
--- （主要用于未来增强安全性，当前由应用层校验）
--- ============================================================
-CREATE OR REPLACE FUNCTION get_header_player_token()
-RETURNS text AS $$
+-- 公开读取 & 写入（内部工具，依赖应用层安全校验）
+DO $$
+DECLARE
+  tbl TEXT;
 BEGIN
-  RETURN coalesce(
-    current_setting('request.headers', true)::json->>'x-player-token',
-    ''
-  );
-EXCEPTION
-  WHEN OTHERS THEN RETURN '';
-END;
-$$ LANGUAGE plpgsql STABLE;
+  FOR tbl IN
+    SELECT unnest(ARRAY['users','rooms','room_members','lobby_items','lobby_comments','players'])
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS "public_access" ON %I', tbl);
+    EXECUTE format('CREATE POLICY "public_access" ON %I FOR SELECT USING (true)', tbl);
+    EXECUTE format('CREATE POLICY "public_insert" ON %I FOR INSERT WITH CHECK (true)', tbl);
+    EXECUTE format('CREATE POLICY "public_update" ON %I FOR UPDATE USING (true) WITH CHECK (true)', tbl);
+    EXECUTE format('CREATE POLICY "public_delete" ON %I FOR DELETE USING (true)', tbl);
+  END LOOP;
+END $$;
+
+-- ============================================================
+-- 8. Realtime 复制
+-- ============================================================
+ALTER PUBLICATION supabase_realtime ADD TABLE users;
+ALTER PUBLICATION supabase_realtime ADD TABLE rooms;
+ALTER PUBLICATION supabase_realtime ADD TABLE lobby_items;
+ALTER PUBLICATION supabase_realtime ADD TABLE lobby_comments;
+ALTER PUBLICATION supabase_realtime ADD TABLE room_members;
+ALTER PUBLICATION supabase_realtime ADD TABLE players;
