@@ -862,18 +862,19 @@
     setBtnLoading(joinBtn, true, '加入中...');
     nameInput.disabled = true;
 
+    const wasFirst = allPlayers.length === 0; // 加入前就是空的 → 你将是第一人
+
     const record = await joinGame(name);
     if (record) {
       playerName = name;
       playerRecord = record;
 
-      // 如果是第一个玩家，设为房主
-      if (allPlayers.length === 1 && allPlayers[0].id === record.id) {
+      // 第一个加入的 → 设为房主
+      if (wasFirst) {
         await setOwner(record);
         playerRecord.is_owner = true;
         isOwner = true;
         ownerActions.style.display = 'block';
-        // 刷新列表
         await fetchPlayers();
         renderPlayerList();
       }
