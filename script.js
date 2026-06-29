@@ -867,46 +867,52 @@
   };
 
   function animateItemFly(fromToken, toToken, itemType) {
-    const fromEl = lobbyStage.querySelector(`[data-token="${fromToken}"]`);
-    const toEl = lobbyStage.querySelector(`[data-token="${toToken}"]`);
-    if (!fromEl || !toEl) return;
+    // 用物理引擎的位置，不受 DOM 重建影响
+    const fromPhys = physicsUsers[fromToken];
+    const toPhys = physicsUsers[toToken];
+    if (!fromPhys || !toPhys) return;
     const eff = ITEM_EFFECTS[itemType] || ITEM_EFFECTS.tomato;
-    const fromR = fromEl.getBoundingClientRect();
-    const toR = toEl.getBoundingClientRect();
+    const stageRect = lobbyStage.getBoundingClientRect();
+    const fromX = stageRect.left + fromPhys.x + 26;
+    const fromY = stageRect.top + fromPhys.y + 26;
+    const toX = stageRect.left + toPhys.x + 26;
+    const toY = stageRect.top + toPhys.y + 26;
 
     // 飞行动画
     const fly = document.createElement('span');
     fly.className = 'item-fly animate';
     fly.textContent = eff.emoji;
-    fly.style.setProperty('--fly-dx', (toR.left - fromR.left + toR.width/2) + 'px');
-    fly.style.setProperty('--fly-dy', (toR.top - fromR.top) + 'px');
-    fly.style.left = fromR.left + 'px';
-    fly.style.top = fromR.top + 'px';
+    fly.style.setProperty('--fly-dx', (toX - fromX) + 'px');
+    fly.style.setProperty('--fly-dy', (toY - fromY) + 'px');
+    fly.style.left = fromX + 'px';
+    fly.style.top = fromY + 'px';
     document.body.appendChild(fly);
     setTimeout(() => {
       fly.remove();
-      // 命中特效
       const hit = document.createElement('span');
       hit.className = 'hit-effect';
       hit.textContent = eff.emoji;
-      hit.style.left = (toR.left + toR.width/2) + 'px';
-      hit.style.top = toR.top + 'px';
+      hit.style.left = toX + 'px';
+      hit.style.top = toY + 'px';
       document.body.appendChild(hit);
       setTimeout(() => hit.remove(), 600);
 
-      // 对目标头像施加效果
-      if (eff.cls) {
+      // 目标头像效果
+      const toEl = lobbyStage.querySelector(`[data-token="${toToken}"]`);
+      if (toEl && eff.cls) {
         toEl.classList.add(eff.cls);
         setTimeout(() => toEl.classList.remove(eff.cls), eff.dur);
       }
-      // 物理撞击 + 抖动
-      toEl.classList.add('avatar-impact');
-      setTimeout(() => toEl.classList.remove('avatar-impact'), 500);
-      // 施加推力
+      if (toEl) {
+        toEl.classList.add('avatar-impact');
+        setTimeout(() => toEl.classList.remove('avatar-impact'), 500);
+      }
+      // 物理推力
       const pu = physicsUsers[toToken];
-      if (pu) {
-        const dx = pu.x - physicsUsers[playerToken]?.x || 0;
-        const dy = pu.y - physicsUsers[playerToken]?.y || 0;
+      const pf = physicsUsers[fromToken];
+      if (pu && pf) {
+        const dx = pu.x - pf.x;
+        const dy = pu.y - pf.y;
         const dist = Math.sqrt(dx*dx+dy*dy) || 1;
         pu.vx += (dx/dist) * eff.push * 0.5;
         pu.vy += (dy/dist) * eff.push * 0.5;
