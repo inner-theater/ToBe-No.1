@@ -891,7 +891,7 @@
     drumstick:{ cls:'avatar-hit-brown', push:6,  dur:2000, emoji:'🍗' },
     bomb:    { cls:'avatar-hit-burnt',  push:15, dur:2000, emoji:'💣' },
     rocket:  { cls:'avatar-hit-burnt',  push:20, dur:2000, emoji:'🚀' },
-    '666':   { cls:'',                  push:4,  dur:1500, emoji:'6️⃣6️⃣6️⃣' },
+    '666':   { cls:'',                  push:4,  dur:1500, emoji:'6️⃣' },
     poop:    { cls:'avatar-hit-brown',  push:6,  dur:2000, emoji:'💩' },
   };
 
