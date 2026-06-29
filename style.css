@@ -148,9 +148,11 @@ body::before{
 .room-card:hover{ border-color:var(--neon-purple); box-shadow:0 0 10px rgba(168,85,247,.2) }
 .room-card .room-name{ font-size:.85rem; font-weight:700 }
 .room-card .room-info{ font-size:.7rem; color:var(--text-muted); margin-top:2px }
-.room-create-form{ display:flex; gap:4px; flex-wrap:wrap }
-.room-name-input{ flex:1; padding:8px; background:var(--bg-input); border:1px solid var(--border-color); border-radius:6px; color:var(--text-primary); font-size:.8rem; outline:none }
+.room-create-form{ display:flex; flex-direction:column; gap:6px }
+.room-name-input{ width:100%; padding:8px; background:var(--bg-input); border:1px solid var(--border-color); border-radius:6px; color:var(--text-primary); font-size:.8rem; outline:none }
 .room-name-input:focus{ border-color:var(--neon-purple) }
+.room-form-btns{ display:flex; gap:4px }
+.room-form-btns .btn{ flex:1 }
 
 /* 弹幕层 */
 .barrage-layer{ display:none }
