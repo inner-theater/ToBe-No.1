@@ -112,11 +112,19 @@ BEGIN
 END $$;
 
 -- ============================================================
--- 8. Realtime 复制
+-- 8. Realtime 复制（幂等，可重复执行）
 -- ============================================================
-ALTER PUBLICATION supabase_realtime ADD TABLE users;
-ALTER PUBLICATION supabase_realtime ADD TABLE rooms;
-ALTER PUBLICATION supabase_realtime ADD TABLE lobby_items;
-ALTER PUBLICATION supabase_realtime ADD TABLE lobby_comments;
-ALTER PUBLICATION supabase_realtime ADD TABLE room_members;
-ALTER PUBLICATION supabase_realtime ADD TABLE players;
+DO $$
+DECLARE
+  tbl TEXT;
+BEGIN
+  FOREACH tbl IN ARRAY ARRAY['users','rooms','lobby_items','lobby_comments','room_members','players']
+  LOOP
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_publication_tables
+      WHERE pubname = 'supabase_realtime' AND tablename = tbl
+    ) THEN
+      EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE %I', tbl);
+    END IF;
+  END LOOP;
+END $$;
