@@ -269,6 +269,7 @@
 
   async function enterLobby() {
     stopAllIntervals();
+    supabase.from('users').update({ is_online: true, last_seen: new Date().toISOString() }).eq('player_token', playerToken).then(()=>{}).catch(()=>{});
     switchView('lobby');
     physicsRAF = null; physicsUsers = {};
     onlineUsers = [];
@@ -633,7 +634,8 @@
   async function enterWaitingRoom(room) {
     stopAllIntervals();
     if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null; }
-    supabase.from('users').update({ is_online: false }).eq('player_token', playerToken).then(()=>{}).catch(()=>{});
+    // 保持在线（人在房间也是在线，否则会被大厅清理逻辑误删）
+    supabase.from('users').update({ is_online: true, last_seen: new Date().toISOString() }).eq('player_token', playerToken).then(()=>{}).catch(()=>{});
     // 清空上轮游戏状态
     gameResults.clear();
     gameActive = false; gameFinished = false;
