@@ -198,6 +198,21 @@
     nicknameCount.textContent = len;
     checkProfileReady();
   });
+  // 移动端 IME 输入法兼容：compositionend + 定时兜底
+  nicknameInput.addEventListener('compositionend', () => {
+    nicknameCount.textContent = nicknameInput.value.length;
+    checkProfileReady();
+  });
+  // 每 300ms 兜底检查（防止事件丢失）
+  setInterval(() => {
+    if (profileView.classList.contains('active')) {
+      const len = nicknameInput.value.length;
+      if (nicknameCount.textContent !== String(len)) {
+        nicknameCount.textContent = len;
+        checkProfileReady();
+      }
+    }
+  }, 300);
 
   function checkProfileReady() {
     const nick = nicknameInput.value.trim();
