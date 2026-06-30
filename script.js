@@ -1135,57 +1135,77 @@
   };
 
   function animateItemFly(fromToken, toToken, itemType) {
-    // 用物理引擎的位置，不受 DOM 重建影响
     const fromPhys = physicsUsers[fromToken];
     const toPhys = physicsUsers[toToken];
     if (!fromPhys || !toPhys) return;
     const eff = ITEM_EFFECTS[itemType] || ITEM_EFFECTS.tomato;
     const stageRect = lobbyStage.getBoundingClientRect();
-    const fromX = stageRect.left + fromPhys.x + 26;
-    const fromY = stageRect.top + fromPhys.y + 26;
-    const toX = stageRect.left + toPhys.x + 26;
-    const toY = stageRect.top + toPhys.y + 26;
 
-    // 飞行动画
     const fly = document.createElement('span');
-    fly.className = 'item-fly animate';
+    fly.className = 'item-fly';
     fly.textContent = eff.emoji;
-    fly.style.setProperty('--fly-dx', (toX - fromX) + 'px');
-    fly.style.setProperty('--fly-dy', (toY - fromY) + 'px');
-    fly.style.left = fromX + 'px';
-    fly.style.top = fromY + 'px';
+    fly.style.position = 'fixed';
+    fly.style.fontSize = '1.8rem';
+    fly.style.pointerEvents = 'none';
+    fly.style.zIndex = '1000';
     document.body.appendChild(fly);
-    setTimeout(() => {
-      fly.remove();
-      const hit = document.createElement('span');
-      hit.className = 'hit-effect';
-      hit.textContent = eff.emoji;
-      hit.style.left = toX + 'px';
-      hit.style.top = toY + 'px';
-      document.body.appendChild(hit);
-      setTimeout(() => hit.remove(), 600);
 
-      // 目标头像效果
-      const toEl = lobbyStage.querySelector(`[data-token="${toToken}"]`);
-      if (toEl && eff.cls) {
-        toEl.classList.add(eff.cls);
-        setTimeout(() => toEl.classList.remove(eff.cls), eff.dur);
+    const startTime = performance.now();
+    const duration = 800; // ms
+    const arcHeight = 80;
+
+    function frame(now) {
+      const elapsed = now - startTime;
+      const t = Math.min(elapsed / duration, 1);
+      const ease = 1 - Math.pow(1 - t, 3); // ease-out cubic
+
+      const sx = stageRect.left + fromPhys.x + 26;
+      const sy = stageRect.top + fromPhys.y + 26;
+      const tx = stageRect.left + toPhys.x + 26;
+      const ty = stageRect.top + toPhys.y + 26;
+
+      const cx = sx + (tx - sx) * ease;
+      const cy = sy + (ty - sy) * ease - Math.sin(t * Math.PI) * arcHeight;
+      fly.style.left = cx + 'px';
+      fly.style.top = cy + 'px';
+      fly.style.transform = `translate(-50%,-50%) scale(${1 + Math.sin(t*Math.PI)*0.4}) rotate(${t*360}deg)`;
+
+      if (t < 1) {
+        requestAnimationFrame(frame);
+      } else {
+        fly.remove();
+        // 命中效果精确落在目标位置
+        const hit = document.createElement('span');
+        hit.className = 'hit-effect';
+        hit.textContent = eff.emoji;
+        hit.style.left = tx + 'px';
+        hit.style.top = ty + 'px';
+        document.body.appendChild(hit);
+        setTimeout(() => hit.remove(), 600);
+
+        // 目标头像效果
+        const toEl = lobbyStage.querySelector(`[data-token="${toToken}"] .avatar-circle`);
+        if (toEl && eff.cls) {
+          toEl.classList.add(eff.cls);
+          setTimeout(() => toEl.classList.remove(eff.cls), eff.dur);
+        }
+        if (toEl) {
+          toEl.classList.add('avatar-impact');
+          setTimeout(() => toEl.classList.remove('avatar-impact'), 500);
+        }
+        // 物理推力
+        const pu = physicsUsers[toToken];
+        const pf = physicsUsers[fromToken];
+        if (pu && pf) {
+          const dx = pu.x - pf.x;
+          const dy = pu.y - pf.y;
+          const dist = Math.sqrt(dx*dx+dy*dy) || 1;
+          pu.vx += (dx/dist) * (eff.push || 30) * 0.5;
+          pu.vy += (dy/dist) * (eff.push || 30) * 0.5;
+        }
       }
-      if (toEl) {
-        toEl.classList.add('avatar-impact');
-        setTimeout(() => toEl.classList.remove('avatar-impact'), 500);
-      }
-      // 物理推力
-      const pu = physicsUsers[toToken];
-      const pf = physicsUsers[fromToken];
-      if (pu && pf) {
-        const dx = pu.x - pf.x;
-        const dy = pu.y - pf.y;
-        const dist = Math.sqrt(dx*dx+dy*dy) || 1;
-        pu.vx += (dx/dist) * eff.push * 0.5;
-        pu.vy += (dy/dist) * eff.push * 0.5;
-      }
-    }, 1000);
+    }
+    requestAnimationFrame(frame);
   }
 
   // 弹幕（Broadcast 广播，不存库）
