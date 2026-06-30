@@ -917,20 +917,46 @@
     historyModal.style.display = 'flex';
     try {
       const { data } = await supabase.from('game_history').select('*').order('played_at', { ascending: false }).limit(50);
-      const records = data || [];
+      // 过滤：只显示当前用户参与过的场次
+      const myNick = (myProfile && myProfile.nickname) ? myProfile.nickname : '';
+      const records = (data || []).filter(r => {
+        try {
+          const players = JSON.parse(r.players_json || '[]');
+          return players.some(p => p.name === myNick || p.nickname === myNick);
+        } catch(e) { return false; }
+      });
       if (records.length === 0) {
         historyList.innerHTML = '<p class="empty-hint">暂无记录，快去来一局！</p>';
         return;
       }
-      historyList.innerHTML = records.map(r => {
+      historyList.innerHTML = records.map((r, idx) => {
         const players = JSON.parse(r.players_json || '[]');
         const sorted = players.sort((a,b) => b.score - a.score);
-        const summary = sorted.map((p,i) => `${i+1}.${p.name}(${p.score}分${i===sorted.length-1?' 👈':''})`).join(' | ');
-        return `<div class="history-card">
-          <div class="h-date">${new Date(r.played_at).toLocaleString('zh-CN')}</div>
-          <div class="h-room">${escapeHTML(r.room_name)}</div>
-          <div class="h-players">${escapeHTML(summary)}</div>
-          <div class="h-loser">🎤 下周主持：${escapeHTML(r.loser_nickname || r.loser)}</div>
+        const dt = new Date(r.played_at);
+        const dateStr = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')} ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`;
+        const winner = sorted[0] || {name:'?'};
+        const loser = sorted[sorted.length-1] || {name:'?'};
+        // 生成排名详情 HTML（默认隐藏）
+        const detailHTML = sorted.map((p,i) => {
+          const medal = i===0 ? '🥇' : (i===1 ? '🥈' : (i===2 ? '🥉' : ''));
+          const isMe = (p.name === myNick || p.nickname === myNick);
+          const extra = i === sorted.length-1 ? ' 🎤' : '';
+          return `<div class="h-detail-row${isMe ? ' h-highlight' : ''}">
+            <span class="h-detail-rank">${medal} #${i+1}</span>
+            <span class="h-detail-name">${escapeHTML(p.name||p.nickname)}${isMe?' (我)':''}${extra}</span>
+            <span class="h-detail-stats">${escapeHTML(p.buff||'')} · ${p.clicks}次点击 · ${p.score}分</span>
+          </div>`;
+        }).join('');
+        return `<div class="history-card" onclick="this.classList.toggle('expanded')">
+          <div class="h-header">
+            <span class="h-date">📅 ${dateStr}</span>
+            <span class="h-room">🏠 ${escapeHTML(r.room_name)}</span>
+            <span class="h-count">${sorted.length}人</span>
+          </div>
+          <div class="h-summary">
+            🥇 <b>${escapeHTML(winner.name||winner.nickname)}</b> · 🎤 <b>${escapeHTML(loser.name||loser.nickname)}</b>
+          </div>
+          <div class="h-detail">${detailHTML}</div>
         </div>`;
       }).join('');
     } catch(e) {
