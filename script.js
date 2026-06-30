@@ -353,14 +353,27 @@
   async function fetchLobbyRooms() {
     const { data } = await supabase.from('rooms').select('*').eq('is_active', true).order('created_at', { ascending: false });
     lobbyRooms = data || [];
-    // 为每个房间附加人数，同时清理空房间
+    // 为每个房间附加人数，同时清理离线成员和空房间
     const clean = [];
+    const cutoff = new Date(Date.now() - 120000).toISOString();
     for (const room of lobbyRooms) {
+      const { data: members } = await supabase.from('room_members').select('id, user_token').eq('room_id', room.id);
+      const tokens = (members || []).map(m => m.user_token);
+      let staleIds = [];
+      if (tokens.length > 0) {
+        const { data: users } = await supabase.from('users').select('player_token, is_online, last_seen').in('player_token', tokens);
+        const onlineTokens = new Set((users || []).filter(u => u.is_online || (u.last_seen && u.last_seen >= cutoff)).map(u => u.player_token));
+        staleIds = (members || []).filter(m => !onlineTokens.has(m.user_token)).map(m => m.id);
+      }
+      // 删除离线成员
+      if (staleIds.length > 0) {
+        await supabase.from('room_members').delete().in('id', staleIds);
+      }
+      // 再查一次真实人数
       const { count } = await supabase.from('room_members').select('*', { count: 'exact', head: true }).eq('room_id', room.id);
       room._memberCount = count || 0;
       if (!count || count === 0) clean.push(room.id);
     }
-    // 删除空房间（兜底清理）
     if (clean.length > 0) {
       lobbyRooms = lobbyRooms.filter(r => !clean.includes(r.id));
       for (const id of clean) {
