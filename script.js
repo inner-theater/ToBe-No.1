@@ -751,6 +751,7 @@
       player_token: playerToken, name: myProfile.nickname,
       click_count: clickCount, buff: b.name, final_score: finalScore
     };
+    log('结算', `广播我的结果: ${finalScore}分`);
     gameResults.set(playerToken, myResult);
     gameChannel.send({ type: 'broadcast', event: 'player_result', payload: myResult });
     // 尝试写 DB（非阻塞，用于历史记录）
@@ -768,11 +769,12 @@
 
   function pollCompletion() {
     let polls = 0;
-    const expectedCount = allPlayers.length;
+    const expectedCount = allPlayers.length || 1; // 防止 allPlayers 为空时永远等
     const iv = setInterval(() => {
       polls++;
       const collected = gameResults.size;
-      if (collected >= expectedCount || polls >= 30) {
+      log('结算轮询', `${collected}/${expectedCount} 人, polls=${polls}`);
+      if (collected >= expectedCount || polls >= 20) {
         clearInterval(iv);
         // 从 Map 构造结果数组
         const results = Array.from(gameResults.values());
@@ -807,17 +809,21 @@
     if (sorted.length>0) {
       loserNameEl.textContent = sorted[sorted.length-1].name;
       // 异步存历史（失败不阻塞）
-      supabase.from('game_history').insert({
-        room_name: currentRoom ? currentRoom.name : '',
-        room_id: currentRoom ? currentRoom.id : '',
-        players_json: JSON.stringify(sorted.map(p=>({
-          name:p.name, nickname:p.name, score:p.final_score, clicks:p.click_count,
-          buff:p.buff, avatar:(tokenMap[p.player_token]||{}).avatar||''
-        }))),
-        loser: sorted[sorted.length-1].player_token,
-        loser_nickname: sorted[sorted.length-1].name,
-        played_at: new Date().toISOString()
-      }).catch(e => console.warn('history save failed', e));
+      (async () => {
+        try {
+          await supabase.from('game_history').insert({
+            room_name: currentRoom ? currentRoom.name : '',
+            room_id: currentRoom ? currentRoom.id : '',
+            players_json: JSON.stringify(sorted.map(p=>({
+              name:p.name, nickname:p.name, score:p.final_score, clicks:p.click_count,
+              buff:p.buff, avatar:(tokenMap[p.player_token]||{}).avatar||''
+            }))),
+            loser: sorted[sorted.length-1].player_token,
+            loser_nickname: sorted[sorted.length-1].name,
+            played_at: new Date().toISOString()
+          });
+        } catch(e) { console.warn('history save failed', e); }
+      })();
     } else {
       loserNameEl.textContent = '???';
       rankingList.innerHTML = '<p class="empty-hint" style="text-align:center;padding:24px">⏳ 等待玩家结算中...</p>';
@@ -1063,6 +1069,7 @@
       .on('broadcast', { event: 'player_result' }, payload => {
         const r = payload.payload;
         if (r && r.player_token) {
+          log('结算', `收到 ${r.name} 的结果: ${r.final_score}分`);
           gameResults.set(r.player_token, r);
         }
       })
