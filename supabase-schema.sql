@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS room_members (
   room_id      UUID REFERENCES rooms(id) ON DELETE CASCADE,
   user_token   TEXT NOT NULL,
   is_owner     BOOLEAN DEFAULT false,
+  result_json  TEXT,
   joined_at    TIMESTAMPTZ DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_rm_room ON room_members(room_id);

@@ -746,23 +746,25 @@
     buffReveal.style.display = 'flex';
     waitingOthers.style.display = 'block';
 
-    // 广播自己的结果（不依赖 players 表）
+    // 写入 room_members.result_json（可靠 UPDATE，不依赖 players 表）
     const myResult = {
       player_token: playerToken, name: myProfile.nickname,
       click_count: clickCount, buff: b.name, final_score: finalScore
     };
-    log('结算', `广播我的结果: ${finalScore}分`);
     gameResults.set(playerToken, myResult);
+    await supabase.from('room_members')
+      .update({ result_json: JSON.stringify(myResult) })
+      .eq('room_id', roomId).eq('user_token', playerToken);
+    // 广播通知其他人"我结算完了"
     gameChannel.send({ type: 'broadcast', event: 'player_result', payload: myResult });
-    // 尝试写 DB（非阻塞，用于历史记录）
+    // 尝试写 players 表（尽力而为，用于历史记录）
     try {
       await supabase.from('players').upsert({
         room_id: String(roomId), name: myProfile.nickname, player_token: playerToken,
         click_count: clickCount, buff: b.name, final_score: finalScore,
         is_finished: true, is_owner: isRoomOwner, game_started: true
       });
-    } catch(e) { /* DB 写入失败不影响游戏流程 */ }
-
+    } catch(e) {}
     gameFinished = true;
     pollCompletion();
   }
@@ -770,29 +772,24 @@
   function pollCompletion() {
     let polls = 0;
     const expectedCount = allPlayers.length || 1;
-    // 保存自己的结果数据用于重发
-    const myResult = gameResults.get(playerToken);
-    const iv = setInterval(() => {
+    const iv = setInterval(async () => {
       polls++;
+      // 每一轮从 DB 查询 room_members 中已完成结算的人（最可靠）
+      const { data: members } = await supabase.from('room_members')
+        .select('user_token, result_json').eq('room_id', roomId).not('result_json', 'is', null);
+      if (members) {
+        members.forEach(m => {
+          try {
+            const r = JSON.parse(m.result_json);
+            if (r && r.player_token && !gameResults.has(r.player_token)) {
+              gameResults.set(r.player_token, r);
+              gameChannel.send({ type: 'broadcast', event: 'player_result', payload: r });
+            }
+          } catch(e) {}
+        });
+      }
       const collected = gameResults.size;
       log('结算轮询', `${collected}/${expectedCount} 人, polls=${polls}`);
-      // 每轮重发自己的结果（Broadcast 可能丢包）
-      if (myResult && collected < expectedCount && polls > 1) {
-        gameChannel.send({ type: 'broadcast', event: 'player_result', payload: myResult });
-      }
-      // 10 秒后还没齐，尝试 DB 兜底
-      if (collected < expectedCount && polls === 10) {
-        supabase.from('players').select('*').eq('room_id', roomId).eq('is_finished', true).then(({data}) => {
-          if (data && data.length > 0) {
-            log('DB兜底', `查到 ${data.length} 条完成记录`);
-            data.forEach(p => {
-              if (!gameResults.has(p.player_token)) {
-                gameResults.set(p.player_token, { player_token:p.player_token, name:p.name, click_count:p.click_count, buff:p.buff, final_score:p.final_score });
-              }
-            });
-          }
-        }).catch(()=>{});
-      }
       if (collected >= expectedCount || polls >= 20) {
         clearInterval(iv);
         const results = Array.from(gameResults.values());
