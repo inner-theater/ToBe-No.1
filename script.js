@@ -1183,13 +1183,13 @@
         document.body.appendChild(hit);
         setTimeout(() => hit.remove(), 600);
 
-        // 目标头像效果
-        const toEl = lobbyStage.querySelector(`[data-token="${toToken}"] .avatar-circle`);
-        if (toEl && eff.cls) {
-          toEl.classList.add(eff.cls);
-          setTimeout(() => toEl.classList.remove(eff.cls), eff.dur);
-        }
+        // 目标头像效果（作用在外层 .float-avatar 上）
+        const toEl = lobbyStage.querySelector(`[data-token="${toToken}"]`);
         if (toEl) {
+          if (eff.cls) {
+            toEl.classList.add(eff.cls);
+            setTimeout(() => toEl.classList.remove(eff.cls), eff.dur);
+          }
           toEl.classList.add('avatar-impact');
           setTimeout(() => toEl.classList.remove('avatar-impact'), 500);
         }
