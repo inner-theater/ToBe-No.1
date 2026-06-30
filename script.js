@@ -772,21 +772,28 @@
   function pollCompletion() {
     let polls = 0;
     const expectedCount = allPlayers.length || 1;
-    const iv = setInterval(async () => {
+    // 保存自己的结果，供重发使用
+    const myResult = gameResults.get(playerToken);
+    const doPoll = async () => {
       polls++;
-      // 每一轮从 DB 查询 room_members 中已完成结算的人（最可靠）
-      const { data: members } = await supabase.from('room_members')
-        .select('user_token, result_json').eq('room_id', roomId).not('result_json', 'is', null);
-      if (members) {
-        members.forEach(m => {
-          try {
-            const r = JSON.parse(m.result_json);
-            if (r && r.player_token && !gameResults.has(r.player_token)) {
-              gameResults.set(r.player_token, r);
-              gameChannel.send({ type: 'broadcast', event: 'player_result', payload: r });
-            }
-          } catch(e) {}
-        });
+      // 1) 从 DB 查 room_members.result_json（可靠存储）
+      try {
+        const { data: members } = await supabase.from('room_members')
+          .select('user_token, result_json').eq('room_id', roomId).not('result_json', 'is', null);
+        if (members) {
+          members.forEach(m => {
+            try {
+              const r = JSON.parse(m.result_json);
+              if (r && r.player_token && !gameResults.has(r.player_token)) {
+                gameResults.set(r.player_token, r);
+              }
+            } catch(e) {}
+          });
+        }
+      } catch(e) { /* 查询失败（未建列等），继续用广播收集 */ }
+      // 2) 如果还没集齐，重发自己的结果（广播兜底）
+      if (myResult && gameResults.size < expectedCount && polls > 1) {
+        gameChannel.send({ type: 'broadcast', event: 'player_result', payload: myResult });
       }
       const collected = gameResults.size;
       log('结算轮询', `${collected}/${expectedCount} 人, polls=${polls}`);
@@ -797,14 +804,24 @@
       } else {
         waitingOthers.textContent = `已结算 ${collected}/${expectedCount} 人...`;
       }
-    }, 1000);
+    };
+    // 立即执行第一轮，然后每秒轮询
+    doPoll();
+    const iv = setInterval(() => doPoll(), 1000);
   }
 
   async function showResults(players) {
     const sorted = (players||[]).sort((a,b)=>b.final_score-a.final_score);
-    // 获取头像
+    // 获取头像：优先 onlineUsers（大厅在线数据），兜底从 users 表查
     const tokenMap = {};
     onlineUsers.forEach(u => { tokenMap[u.player_token] = { nick: u.nickname, avatar: u.avatar_b64 }; });
+    // 从 users 表补充缺失的头像
+    const missing = sorted.filter(p => !tokenMap[p.player_token]);
+    if (missing.length > 0) {
+      const { data: users } = await supabase.from('users').select('player_token,avatar_b64')
+        .in('player_token', missing.map(p => p.player_token));
+      (users||[]).forEach(u => { tokenMap[u.player_token] = { nick: '', avatar: u.avatar_b64 }; });
+    }
 
     rankingList.innerHTML = sorted.map((p,i)=>{
       const cls = i===sorted.length-1&&sorted.length>1?'rank-item last-place':'rank-item';
