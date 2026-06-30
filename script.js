@@ -194,25 +194,20 @@
   }
 
   nicknameInput.addEventListener('input', () => {
-    const len = nicknameInput.value.length;
-    nicknameCount.textContent = len;
+    nicknameCount.textContent = nicknameInput.value.length;
     checkProfileReady();
   });
-  // 移动端 IME 输入法兼容：compositionend + 定时兜底
   nicknameInput.addEventListener('compositionend', () => {
     nicknameCount.textContent = nicknameInput.value.length;
     checkProfileReady();
   });
-  // 每 300ms 兜底检查（防止事件丢失）
+  // 定时兜底：微信等特殊浏览器中 input 事件可能不触发，每 150ms 强检
   setInterval(() => {
     if (profileView.classList.contains('active')) {
-      const len = nicknameInput.value.length;
-      if (nicknameCount.textContent !== String(len)) {
-        nicknameCount.textContent = len;
-        checkProfileReady();
-      }
+      nicknameCount.textContent = nicknameInput.value.length;
+      checkProfileReady();
     }
-  }, 300);
+  }, 150);
 
   function checkProfileReady() {
     const nick = nicknameInput.value.trim();
