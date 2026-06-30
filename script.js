@@ -356,7 +356,7 @@
     lobbyRooms = data || [];
     // 为每个房间附加人数，同时清理离线成员和空房间
     const clean = [];
-    const cutoff = new Date(Date.now() - 120000).toISOString();
+    const cutoff = new Date(Date.now() - 60000).toISOString();
     for (const room of lobbyRooms) {
       const { data: members } = await supabase.from('room_members').select('id, user_token').eq('room_id', room.id);
       const tokens = (members || []).map(m => m.user_token);
@@ -695,6 +695,38 @@
         roomSubtitle.textContent = '你是房主，等人齐就能开始！';
         if (gameChannel) {
           gameChannel.send({ type: 'broadcast', event: 'owner_changed', payload: { new_owner: first.user_token } });
+        }
+      }
+    }
+    // 清理离线超过 60 秒的成员
+    const cutoff = new Date(Date.now() - 60000).toISOString();
+    const offlineTokens = (users || []).filter(u =>
+      u.player_token !== playerToken && !u.is_online && u.last_seen < cutoff
+    ).map(u => u.player_token);
+    if (offlineTokens.length > 0) {
+      await supabase.from('room_members').delete().eq('room_id', roomId).in('user_token', offlineTokens);
+      // 检查房间是否还有人
+      const { count: remain } = await supabase.from('room_members').select('*', { count: 'exact', head: true }).eq('room_id', roomId);
+      if (!remain || remain === 0) {
+        // 房间空了，解散
+        await supabase.from('rooms').delete().eq('id', roomId);
+        currentRoom = null; isRoomOwner = false; roomId = null; allPlayers = [];
+        localStorage.removeItem('active_room_id');
+        localStorage.removeItem('active_room_name');
+        localStorage.removeItem('active_room_owner');
+        enterLobby();
+        return;
+      }
+      // 如果被移除的是 owner，触发晋升
+      const stillHasOwner = await supabase.from('room_members').select('id').eq('room_id', roomId).eq('is_owner', true).limit(1);
+      const { data: still } = stillHasOwner;
+      if (!still || still.length === 0) {
+        // 没有 owner 了，promote 第一个
+        const { data: first } = await supabase.from('room_members').select('*').eq('room_id', roomId).order('joined_at', { ascending: true }).limit(1);
+        if (first && first.length > 0) {
+          await supabase.from('room_members').update({ is_owner: true }).eq('id', first[0].id);
+          await supabase.from('rooms').update({ creator_token: first[0].user_token }).eq('id', roomId);
+          if (gameChannel) gameChannel.send({ type: 'broadcast', event: 'owner_changed', payload: { new_owner: first[0].user_token } });
         }
       }
     }
