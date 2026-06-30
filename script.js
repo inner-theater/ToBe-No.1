@@ -947,13 +947,15 @@
 
   async function showResults(players) {
     const sorted = (players||[]).sort((a,b)=>b.final_score-a.final_score);
-    // 精准打击：抽中此 Buff 的玩家，只要不是点击次数最高者 → 额外 +5
+    // 精准打击：不是点击之王则抢最高点击者 5 分（自己 +5，对方 -5）
     const maxClicks = Math.max(...sorted.map(p => p.click_count || 0), 0);
-    sorted.forEach(p => {
-      if ((p.buff || '').includes('精准打击') && (p.click_count || 0) < maxClicks) {
-        p.final_score += 5;
-      }
-    });
+    const striker = sorted.find(p => (p.buff || '').includes('精准打击'));
+    if (striker && (striker.click_count || 0) < maxClicks) {
+      striker.final_score += 5;
+      // 找点击次数最高的人，扣 5 分
+      const victim = sorted.find(p => p.player_token !== striker.player_token && (p.click_count || 0) === maxClicks);
+      if (victim) victim.final_score = Math.max(0, victim.final_score - 5);
+    }
     // 重新排序
     sorted.sort((a,b)=>b.final_score-a.final_score);
     // 获取头像：优先 onlineUsers（大厅在线数据），兜底从 users 表查
