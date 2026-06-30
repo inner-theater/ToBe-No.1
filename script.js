@@ -867,7 +867,7 @@
   const BUFFS = [
     { name:'🚀 火箭加速', desc:'总分翻倍！', icon:'🚀', fn: s=>s*2, w:10 },
     { name:'💣 哑弹', desc:'扣5分...', icon:'💣', fn: s=>Math.max(0,s-5), w:10 },
-    { name:'🎯 精准打击', desc:'不是第一则+5分', icon:'🎯', fn: s=>s, w:10 },
+    { name:'🎯 精准打击', desc:'抢夺第一名5分', icon:'🎯', fn: s=>s, w:10 },
     { name:'🛡️ 无事发生', desc:'维持原分', icon:'🛡️', fn: s=>s, w:70 },
   ];
   const BUFF_ROULETTE = (() => {
