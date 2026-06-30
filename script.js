@@ -27,6 +27,7 @@
 
   // Lobby
   const lobbyStage       = $('#lobby-stage');
+  const lobbyBottom      = $('#lobby-bottom');
   const roomList         = $('#room-list');
   const createRoomBtn    = $('#create-room-btn');
   const logoutBtn        = $('#logout-btn');
@@ -98,6 +99,7 @@
   let gameFinished = false;
   let allPlayers   = [];
   let gamePlayerRecord = null;
+  let gameResults = new Map(); // token → { name, click_count, buff, final_score } — 广播收集模式
 
   // 大厅状态
   let onlineUsers  = [];
@@ -494,12 +496,14 @@
     roomCreateForm.style.display = 'flex';
     roomNameInput.focus();
     createRoomBtn.style.display = 'none';
+    if (lobbyBottom) lobbyBottom.style.display = 'none'; // 移动端隐藏底部弹幕栏，避免键盘遮挡
   });
 
   roomCreateCancel.addEventListener('click', () => {
     roomCreateForm.style.display = 'none';
     roomNameInput.value = '';
     createRoomBtn.style.display = 'block';
+    if (lobbyBottom) lobbyBottom.style.display = '';
   });
 
   roomCreateConfirm.addEventListener('click', async () => {
@@ -518,6 +522,7 @@
     roomPasswordInput.value = '';
     roomCreateConfirm.disabled = false;
     createRoomBtn.style.display = 'block';
+    if (lobbyBottom) lobbyBottom.style.display = '';
     currentRoom = data;
     isRoomOwner = true;
     enterWaitingRoom(data);
@@ -608,19 +613,6 @@
     playerCountEl.textContent = allPlayers.length;
     if (isRoomOwner) { ownerActions.style.display = 'block'; propModeLabel.style.display = 'block'; }
     else { ownerActions.style.display = 'none'; propModeLabel.style.display = 'none'; }
-
-    // 所有非房主检测游戏是否已开始（同时通过 players 表和 Realtime 双重保障）
-    if (!gameActive && !gameFinished) {
-      try {
-        const { data: check } = await supabase.from('players')
-          .select('game_started').eq('room_id', roomId).eq('game_started', true).limit(1);
-        if (check && check.length > 0) {
-          gameActive = true;
-          stopAllIntervals();
-          enterGamePhase();
-        }
-      } catch(e) {}
-    }
   }
 
   let lastPlayerNames = ''; // 避免 DOM 闪烁
@@ -641,30 +633,27 @@
 
   leaveRoomBtn.addEventListener('click', exitRoomToLobby);
 
-  // ===================== 游戏（保留原逻辑，适配新流程）=====================
+  // ===================== 游戏（广播模式，不依赖 players 表）=====================
   startBtn.addEventListener('click', async () => {
     if (!isRoomOwner) return;
     if (allPlayers.length < 2) return showToast('至少 2 人才能开始！');
 
     startBtn.disabled = true;
     startBtn.textContent = '启动中...';
-    // 尝试预创建玩家记录（失败不阻塞——每个玩家结算时会自行 upsert）
-    try {
-      await supabase.from('players').delete().eq('room_id', roomId);
-      await supabase.from('players').insert(allPlayers.map(p => ({
-        room_id: String(roomId), name: p.name, player_token: p.player_token,
-        click_count: 0, buff: '', final_score: 0, is_finished: false,
-        is_owner: p.is_owner, game_started: true
-      })));
-    } catch(e) { console.warn('pre-create players non-fatal', e); }
-    // 双重保障：广播 + 数据库标记
-    gameChannel.send({ type: 'broadcast', event: 'game_start', payload: {} });
+    // 清空上轮结果
+    gameResults.clear();
+    // 广播游戏开始 + 玩家名单（让每个人知道该等谁）
+    gameChannel.send({
+      type: 'broadcast', event: 'game_start',
+      payload: { players: allPlayers.map(p => ({ name: p.name, player_token: p.player_token })) }
+    });
     gameActive = true;
     enterGamePhase();
   });
 
   function enterGamePhase() {
     stopAllIntervals();
+    gameResults.clear();
     switchView('game');
     countdownDisplay.style.display = 'block';
     countdownLabel.style.display = 'block';
@@ -757,51 +746,46 @@
     buffReveal.style.display = 'flex';
     waitingOthers.style.display = 'block';
 
-    // 写入自己的结果（用 upsert，确保无论预创建是否成功都能写入）
-    const playerData = {
-      room_id: String(roomId), name: myProfile.nickname, player_token: playerToken,
-      click_count: clickCount, buff: b.name, final_score: finalScore,
-      is_finished: true, is_owner: isRoomOwner, game_started: true
+    // 广播自己的结果（不依赖 players 表）
+    const myResult = {
+      player_token: playerToken, name: myProfile.nickname,
+      click_count: clickCount, buff: b.name, final_score: finalScore
     };
-    // 策略：先尝试 upsert → 失败则尝试 insert（新行）→ 再失败则 update（旧行）
-    let writeOk = false;
+    gameResults.set(playerToken, myResult);
+    gameChannel.send({ type: 'broadcast', event: 'player_result', payload: myResult });
+    // 尝试写 DB（非阻塞，用于历史记录）
     try {
-      const { error } = await supabase.from('players').upsert(playerData);
-      if (!error) writeOk = true;
-    } catch(e) {}
-    if (!writeOk) {
-      try { const { error } = await supabase.from('players').insert(playerData); if (!error) writeOk = true; } catch(e) {}
-    }
-    if (!writeOk) {
-      try { await supabase.from('players').update({ click_count:clickCount, buff:b.name, final_score:finalScore, is_finished:true }).eq('player_token',playerToken).eq('room_id',roomId); writeOk=true; } catch(e) {}
-    }
-    if (!writeOk) console.error('Failed to save player result');
+      await supabase.from('players').upsert({
+        room_id: String(roomId), name: myProfile.nickname, player_token: playerToken,
+        click_count: clickCount, buff: b.name, final_score: finalScore,
+        is_finished: true, is_owner: isRoomOwner, game_started: true
+      });
+    } catch(e) { /* DB 写入失败不影响游戏流程 */ }
+
     gameFinished = true;
     pollCompletion();
   }
 
   function pollCompletion() {
     let polls = 0;
-    const iv = setInterval(async () => {
+    const expectedCount = allPlayers.length;
+    const iv = setInterval(() => {
       polls++;
-      const { data } = await supabase.from('players').select('*').eq('room_id', roomId);
-      const players = data || [];
-      // 如果还没有任何玩家数据（owner 的 upsert 可能还在进行），多等几轮
-      if (players.length === 0 && polls < 8) return;
-      const done = players.length > 0 && players.every(p => p.is_finished);
-      if (done || polls >= 60) { clearInterval(iv); showResults(players); }
-      else { const dc = players.filter(p=>p.is_finished).length; waitingOthers.textContent = `已结算 ${dc}/${players.length} 人...`; }
+      const collected = gameResults.size;
+      if (collected >= expectedCount || polls >= 30) {
+        clearInterval(iv);
+        // 从 Map 构造结果数组
+        const results = Array.from(gameResults.values());
+        showResults(results);
+      } else {
+        waitingOthers.textContent = `已结算 ${collected}/${expectedCount} 人...`;
+      }
     }, 1000);
   }
 
   async function showResults(players) {
-    // 如果传进来的数据为空，直接从 DB 再拉一次
-    if (!players || players.length === 0) {
-      const { data: fallback } = await supabase.from('players').select('*').eq('room_id', roomId);
-      players = fallback || [];
-    }
-    const sorted = (players||[]).filter(p=>p.is_finished).sort((a,b)=>b.final_score-a.final_score);
-    // 获取头像（从 onlineUsers 或 users 表查找）
+    const sorted = (players||[]).sort((a,b)=>b.final_score-a.final_score);
+    // 获取头像
     const tokenMap = {};
     onlineUsers.forEach(u => { tokenMap[u.player_token] = { nick: u.nickname, avatar: u.avatar_b64 }; });
 
@@ -822,27 +806,21 @@
     }).join('');
     if (sorted.length>0) {
       loserNameEl.textContent = sorted[sorted.length-1].name;
-      try {
-        await supabase.from('game_history').insert({
-          room_name: currentRoom ? currentRoom.name : '',
-          room_id: currentRoom ? currentRoom.id : '',
-          players_json: JSON.stringify(sorted.map(p=>({
-            name:p.name, nickname:p.name, score:p.final_score, clicks:p.click_count,
-            buff:p.buff, avatar:(tokenMap[p.player_token]||{}).avatar||''
-          }))),
-          loser: sorted[sorted.length-1].player_token,
-          loser_nickname: sorted[sorted.length-1].name,
-          played_at: new Date().toISOString()
-        });
-      } catch(e) { console.error('save history error', e); }
+      // 异步存历史（失败不阻塞）
+      supabase.from('game_history').insert({
+        room_name: currentRoom ? currentRoom.name : '',
+        room_id: currentRoom ? currentRoom.id : '',
+        players_json: JSON.stringify(sorted.map(p=>({
+          name:p.name, nickname:p.name, score:p.final_score, clicks:p.click_count,
+          buff:p.buff, avatar:(tokenMap[p.player_token]||{}).avatar||''
+        }))),
+        loser: sorted[sorted.length-1].player_token,
+        loser_nickname: sorted[sorted.length-1].name,
+        played_at: new Date().toISOString()
+      }).catch(e => console.warn('history save failed', e));
     } else {
       loserNameEl.textContent = '???';
-      rankingList.innerHTML = '<p class="empty-hint" style="text-align:center;padding:24px">⏳ 数据加载中，稍后自动更新...</p>';
-      // 3秒后再试一次
-      setTimeout(async () => {
-        const { data: retry } = await supabase.from('players').select('*').eq('room_id', roomId);
-        if (retry && retry.length > 0) showResults(retry);
-      }, 3000);
+      rankingList.innerHTML = '<p class="empty-hint" style="text-align:center;padding:24px">⏳ 等待玩家结算中...</p>';
     }
     switchView('result');
     if (isRoomOwner) { ownerReset.style.display = 'block'; replayBtn.style.display = 'block'; }
@@ -1070,28 +1048,26 @@
   function setupGameRealtime() {
     if (gameChannel) supabase.removeChannel(gameChannel);
     gameChannel = supabase.channel('game-'+roomId)
-      .on('broadcast', { event: 'game_start' }, () => {
+      .on('broadcast', { event: 'game_start' }, payload => {
         if (!gameActive && !gameFinished) {
+          // 从广播获取玩家名单（非 owner 也需要知道等谁）
+          if (payload.payload && payload.payload.players) {
+            allPlayers = payload.payload.players;
+          }
+          gameResults.clear();
           gameActive = true;
           stopAllIntervals();
           enterGamePhase();
+        }
+      })
+      .on('broadcast', { event: 'player_result' }, payload => {
+        const r = payload.payload;
+        if (r && r.player_token) {
+          gameResults.set(r.player_token, r);
         }
       })
       .on('broadcast', { event: 'owner_changed' }, () => {
-        // 立即刷新人员列表，fetchWaitingPlayers 会检测并更新 owner UI
         fetchWaitingPlayers();
-      })
-      .on('postgres_changes', { event:'*', schema:'public', table:'players', filter: 'room_id=eq.'+roomId }, payload => {
-        if (!gameActive && !gameFinished && payload.new && payload.new.game_started) {
-          gameActive = true;
-          stopAllIntervals();
-          enterGamePhase();
-          return;
-        }
-        if (waitingView.classList.contains('active')) fetchWaitingPlayers().then(renderPlayerListUI);
-        else if (resultView.classList.contains('active')) {
-          supabase.from('players').select('*').eq('room_id',roomId).then(({data})=>{ if(data&&data.every(p=>p.is_finished)) showResults(data); });
-        }
       })
       .subscribe();
   }
