@@ -645,19 +645,16 @@
 
     startBtn.disabled = true;
     startBtn.textContent = '同步中...';
-    // 把 room_members 同步到 players 表
-    let upsertOk = true;
-    for (const p of allPlayers) {
-      const { error } = await supabase.from('players').upsert({
-        room_id: roomId, name: p.name, player_token: p.player_token,
-        click_count: 0, buff: '', final_score: 0, is_finished: false,
-        is_owner: p.is_owner, game_started: true
-      }, { onConflict: 'player_token,room_id' });
-      if (error) { console.error('upsert player error', error); upsertOk = false; }
-    }
+    // 先清理旧数据，再插入（避免 upsert onConflict 兼容问题）
+    await supabase.from('players').delete().eq('room_id', roomId);
+    const { error } = await supabase.from('players').insert(allPlayers.map(p => ({
+      room_id: roomId, name: p.name, player_token: p.player_token,
+      click_count: 0, buff: '', final_score: 0, is_finished: false,
+      is_owner: p.is_owner, game_started: true
+    })));
     startBtn.disabled = false;
     startBtn.textContent = '全军出击';
-    if (!upsertOk) return showToast('同步失败，请重试');
+    if (error) { console.error('sync players error', error); return showToast('同步失败，请重试'); }
     // 双重保障：广播 + 数据库
     gameChannel.send({ type: 'broadcast', event: 'game_start', payload: {} });
     gameActive = true;
