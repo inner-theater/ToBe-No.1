@@ -182,6 +182,21 @@ body::before{
 .item-option{ background:var(--bg-input); border:1px solid var(--border-color); border-radius:var(--radius); color:var(--text-primary); padding:10px 14px; font-size:1.3rem; cursor:pointer; transition:var(--transition); min-width:44px }
 .item-option:hover{ border-color:var(--neon-purple); transform:scale(1.1); box-shadow:0 0 12px rgba(168,85,247,.3) }
 .item-popup-close{ background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:.85rem }
+
+/* ====== 密码弹窗 ====== */
+.pwd-modal-content{ background:var(--bg-card); border:1px solid var(--neon-purple); border-radius:var(--radius-lg); padding:20px; max-width:340px; width:90vw; display:flex; flex-direction:column; gap:12px; position:relative }
+.pwd-input{ padding:10px 14px; background:var(--bg-input); border:1px solid var(--border-color); border-radius:8px; color:var(--text-primary); font-size:1rem; outline:none; letter-spacing:2px }
+.pwd-input:focus{ border-color:var(--neon-purple); box-shadow:0 0 8px rgba(168,85,247,.2) }
+.pwd-btns{ display:flex; gap:8px; justify-content:flex-end }
+
+/* ====== 道具说明弹窗 ====== */
+.prop-intro-content{ background:var(--bg-card); border:1px solid var(--gold); border-radius:var(--radius-lg); padding:20px; max-width:380px; width:90vw; max-height:70vh; overflow-y:auto }
+.prop-intro-list{ display:flex; flex-direction:column; gap:8px }
+.prop-intro-item{ display:flex; align-items:center; gap:10px; padding:10px 12px; background:var(--bg-input); border-radius:8px; border:1px solid var(--border-color) }
+.prop-intro-icon{ font-size:1.5rem; min-width:36px; text-align:center }
+.prop-intro-name{ font-weight:700; font-size:.88rem; color:var(--text-primary) }
+.prop-intro-desc{ font-size:.78rem; color:var(--text-muted); margin-top:2px }
+
 .history-modal-content{ background:var(--bg-card); border:1px solid var(--neon-cyan); border-radius:var(--radius-lg); padding:24px; max-width:500px; width:90vw; max-height:70vh; overflow-y:auto }
 .history-list{ display:flex; flex-direction:column; gap:8px }
 .history-card{ background:var(--bg-input); border-radius:8px; padding:12px; font-size:.85rem; cursor:pointer; transition:var(--transition); border:1px solid transparent }

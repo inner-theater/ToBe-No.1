@@ -51,6 +51,15 @@
   const replayBtn     = $('#replay-btn');
   const propModeCheck = $('#prop-mode-checkbox');
   const propModeLabel = $('#prop-mode-label');
+  // Password modal
+  const pwdModal    = $('#pwd-modal');
+  const pwdInput    = $('#pwd-input');
+  const pwdConfirm  = $('#pwd-confirm');
+  const pwdCancel   = $('#pwd-cancel');
+  // Prop intro modal
+  const propIntroModal = $('#prop-intro-modal');
+  const propIntroList  = $('#prop-intro-list');
+  const propIntroClose = $('#prop-intro-close');
   const waitingRoomTitle = $('#waiting-room-title');
   const roomSubtitle  = $('#room-subtitle');
 
@@ -529,12 +538,16 @@
   });
 
   // 加入房间
-  async function joinRoom(roomId) {
+  async function joinRoom(roomId, needPwd) {
     const { data: room } = await supabase.from('rooms').select('*').eq('id', roomId).single();
     if (!room) return showToast('房间不存在');
     if (room.password) {
-      const pwd = prompt('此房间需要密码：');
-      if (pwd !== room.password) return showToast('密码错误');
+      if (needPwd === undefined) {
+        // 需要密码 → 弹出密码弹窗
+        showPwdModal(room);
+        return;
+      }
+      if (needPwd !== room.password) return showToast('密码错误');
     }
     const { data: existing } = await supabase.from('room_members').select('*').eq('room_id', roomId).eq('user_token', playerToken);
     if (existing && existing.length === 0) {
@@ -545,6 +558,54 @@
     isRoomOwner = room.creator_token === playerToken;
     enterWaitingRoom(room);
   }
+
+  // 密码弹窗
+  let pendingRoom = null;
+  function showPwdModal(room) {
+    pendingRoom = room;
+    pwdInput.value = '';
+    pwdModal.style.display = 'flex';
+    setTimeout(() => pwdInput.focus(), 100);
+  }
+  pwdConfirm.addEventListener('click', () => {
+    const pwd = pwdInput.value.trim();
+    pwdModal.style.display = 'none';
+    if (pendingRoom) joinRoom(pendingRoom.id, pwd);
+    pendingRoom = null;
+  });
+  pwdCancel.addEventListener('click', () => {
+    pwdModal.style.display = 'none';
+    pendingRoom = null;
+  });
+  pwdInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') pwdConfirm.click();
+  });
+  pwdModal.addEventListener('click', e => {
+    if (e.target === pwdModal) { pwdModal.style.display = 'none'; pendingRoom = null; }
+  });
+
+  // 道具赛开关 → 向所有人展示道具说明
+  propModeCheck.addEventListener('change', () => {
+    if (propModeCheck.checked && isRoomOwner) {
+      gameChannel.send({ type: 'broadcast', event: 'prop_intro', payload: {} });
+      showPropIntro();
+    }
+  });
+  // 道具说明弹窗
+  function showPropIntro() {
+    propIntroList.innerHTML = BUFFS.map(b =>
+      `<div class="prop-intro-item">
+        <span class="prop-intro-icon">${b.icon}</span>
+        <div class="prop-intro-text">
+          <div class="prop-intro-name">${b.name}</div>
+          <div class="prop-intro-desc">${b.desc}</div>
+        </div>
+      </div>`
+    ).join('');
+    propIntroModal.style.display = 'flex';
+  }
+  propIntroClose.addEventListener('click', () => { propIntroModal.style.display = 'none'; });
+  propIntroModal.addEventListener('click', e => { if (e.target === propIntroModal) propIntroModal.style.display = 'none'; });
 
   // 进入等待室
   async function enterWaitingRoom(room) {
@@ -962,12 +1023,12 @@
         }).join('');
         return `<div class="history-card" onclick="this.classList.toggle('expanded')">
           <div class="h-header">
-            <span class="h-date">📅 ${dateStr}</span>
-            <span class="h-room">🏠 ${escapeHTML(r.room_name)}</span>
+            <span class="h-date">${dateStr}</span>
+            <span class="h-room">${escapeHTML(r.room_name)}</span>
             <span class="h-count">${sorted.length}人</span>
           </div>
           <div class="h-summary">
-            🥇 <b>${escapeHTML(winner.name||winner.nickname)}</b> · 🎤 <b>${escapeHTML(loser.name||loser.nickname)}</b>
+            冠军 <b>${escapeHTML(winner.name||winner.nickname)}</b> · 主持 <b>${escapeHTML(loser.name||loser.nickname)}</b>
           </div>
           <div class="h-detail">${detailHTML}</div>
         </div>`;
@@ -1155,6 +1216,9 @@
         clickCount = 0;
         stopAllIntervals();
         enterWaitingRoom(currentRoom);
+      })
+      .on('broadcast', { event: 'prop_intro' }, () => {
+        showPropIntro();
       })
       .subscribe();
   }

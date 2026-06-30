@@ -168,11 +168,32 @@
   <!-- 历史记录弹窗 -->
   <div id="history-modal" class="item-popup" style="display:none">
     <div class="history-modal-content">
-      <h2 class="neon-text" style="font-size:1.2rem;margin-bottom:16px">📋 对战历史</h2>
+      <h2 class="neon-text" style="font-size:1.2rem;margin-bottom:16px">对战历史</h2>
       <div class="history-list" id="history-list">
         <p class="empty-hint">暂无记录</p>
       </div>
       <button class="btn btn-secondary btn-small" id="history-close" style="margin-top:12px">关闭</button>
+    </div>
+  </div>
+
+  <!-- 密码输入弹窗 -->
+  <div id="pwd-modal" class="item-popup" style="display:none">
+    <div class="pwd-modal-content">
+      <p class="item-popup-title">🔒 此房间需要密码</p>
+      <input type="password" id="pwd-input" class="pwd-input" placeholder="请输入密码" maxlength="10" autocomplete="off">
+      <div class="pwd-btns">
+        <button id="pwd-confirm" class="btn btn-primary btn-small">确认</button>
+        <button id="pwd-cancel" class="btn btn-secondary btn-small">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 道具说明弹窗 -->
+  <div id="prop-intro-modal" class="item-popup" style="display:none">
+    <div class="prop-intro-content">
+      <h2 class="neon-text" style="font-size:1.1rem;margin-bottom:12px;text-align:center">🎯 道具赛说明</h2>
+      <div class="prop-intro-list" id="prop-intro-list"></div>
+      <button class="btn btn-secondary btn-small" id="prop-intro-close" style="margin-top:12px;width:100%">知道了</button>
     </div>
   </div>
 
