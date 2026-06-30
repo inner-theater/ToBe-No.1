@@ -801,7 +801,7 @@
   const BUFFS = [
     { name:'🚀 火箭加速', desc:'总分翻倍！', icon:'🚀', fn: s=>s*2 },
     { name:'💣 哑弹', desc:'扣5分...', icon:'💣', fn: s=>Math.max(0,s-5) },
-    { name:'🎯 精准打击', desc:'抢最高分5分！', icon:'🎯', fn: (s,players,self)=>{ let max=0; players.filter(p=>p.player_token!==self.player_token).forEach(p=>{if(p.click_count>max)max=p.click_count}); return s>=max?s:s+5 } },
+    { name:'🎯 精准打击', desc:'抢最高分5分！', icon:'🎯', fn: (s,players,self)=>{ let max=0; players.filter(p=>p.player_token!==self.player_token).forEach(p=>{if(p.click_count>max)max=p.click_count}); return s>max?s:s+5 } },
     { name:'🛡️ 无事发生', desc:'维持原分', icon:'🛡️', fn: s=>s },
   ];
 
