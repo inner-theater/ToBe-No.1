@@ -558,6 +558,9 @@
     if (isRoomOwner) { ownerActions.style.display = 'block'; propModeLabel.style.display = 'block'; }
     else { ownerActions.style.display = 'none'; propModeLabel.style.display = 'none'; }
     replayBtn.style.display = 'none';
+    // 重置开始按钮状态
+    startBtn.disabled = false;
+    startBtn.textContent = '全军出击';
     allPlayers = [];
     gameActive = false; gameFinished = false;
     await fetchWaitingPlayers();
@@ -644,18 +647,17 @@
     if (allPlayers.length < 2) return showToast('至少 2 人才能开始！');
 
     startBtn.disabled = true;
-    startBtn.textContent = '同步中...';
-    // 先清理旧数据，再插入（避免 upsert onConflict 兼容问题）
-    await supabase.from('players').delete().eq('room_id', roomId);
-    const { error } = await supabase.from('players').insert(allPlayers.map(p => ({
-      room_id: roomId, name: p.name, player_token: p.player_token,
-      click_count: 0, buff: '', final_score: 0, is_finished: false,
-      is_owner: p.is_owner, game_started: true
-    })));
-    startBtn.disabled = false;
-    startBtn.textContent = '全军出击';
-    if (error) { console.error('sync players error', error); return showToast('同步失败，请重试'); }
-    // 双重保障：广播 + 数据库
+    startBtn.textContent = '启动中...';
+    // 尝试预创建玩家记录（失败不阻塞——每个玩家结算时会自行 upsert）
+    try {
+      await supabase.from('players').delete().eq('room_id', roomId);
+      await supabase.from('players').insert(allPlayers.map(p => ({
+        room_id: String(roomId), name: p.name, player_token: p.player_token,
+        click_count: 0, buff: '', final_score: 0, is_finished: false,
+        is_owner: p.is_owner, game_started: true
+      })));
+    } catch(e) { console.warn('pre-create players non-fatal', e); }
+    // 双重保障：广播 + 数据库标记
     gameChannel.send({ type: 'broadcast', event: 'game_start', payload: {} });
     gameActive = true;
     enterGamePhase();
@@ -755,7 +757,25 @@
     buffReveal.style.display = 'flex';
     waitingOthers.style.display = 'block';
 
-    await supabase.from('players').update({ click_count:clickCount, buff:b.name, final_score:finalScore, is_finished:true }).eq('player_token',playerToken).eq('room_id',roomId);
+    // 写入自己的结果（用 upsert，确保无论预创建是否成功都能写入）
+    const playerData = {
+      room_id: String(roomId), name: myProfile.nickname, player_token: playerToken,
+      click_count: clickCount, buff: b.name, final_score: finalScore,
+      is_finished: true, is_owner: isRoomOwner, game_started: true
+    };
+    // 策略：先尝试 upsert → 失败则尝试 insert（新行）→ 再失败则 update（旧行）
+    let writeOk = false;
+    try {
+      const { error } = await supabase.from('players').upsert(playerData);
+      if (!error) writeOk = true;
+    } catch(e) {}
+    if (!writeOk) {
+      try { const { error } = await supabase.from('players').insert(playerData); if (!error) writeOk = true; } catch(e) {}
+    }
+    if (!writeOk) {
+      try { await supabase.from('players').update({ click_count:clickCount, buff:b.name, final_score:finalScore, is_finished:true }).eq('player_token',playerToken).eq('room_id',roomId); writeOk=true; } catch(e) {}
+    }
+    if (!writeOk) console.error('Failed to save player result');
     gameFinished = true;
     pollCompletion();
   }
