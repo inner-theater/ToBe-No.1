@@ -769,14 +769,32 @@
 
   function pollCompletion() {
     let polls = 0;
-    const expectedCount = allPlayers.length || 1; // 防止 allPlayers 为空时永远等
+    const expectedCount = allPlayers.length || 1;
+    // 保存自己的结果数据用于重发
+    const myResult = gameResults.get(playerToken);
     const iv = setInterval(() => {
       polls++;
       const collected = gameResults.size;
       log('结算轮询', `${collected}/${expectedCount} 人, polls=${polls}`);
+      // 每轮重发自己的结果（Broadcast 可能丢包）
+      if (myResult && collected < expectedCount && polls > 1) {
+        gameChannel.send({ type: 'broadcast', event: 'player_result', payload: myResult });
+      }
+      // 10 秒后还没齐，尝试 DB 兜底
+      if (collected < expectedCount && polls === 10) {
+        supabase.from('players').select('*').eq('room_id', roomId).eq('is_finished', true).then(({data}) => {
+          if (data && data.length > 0) {
+            log('DB兜底', `查到 ${data.length} 条完成记录`);
+            data.forEach(p => {
+              if (!gameResults.has(p.player_token)) {
+                gameResults.set(p.player_token, { player_token:p.player_token, name:p.name, click_count:p.click_count, buff:p.buff, final_score:p.final_score });
+              }
+            });
+          }
+        }).catch(()=>{});
+      }
       if (collected >= expectedCount || polls >= 20) {
         clearInterval(iv);
-        // 从 Map 构造结果数组
         const results = Array.from(gameResults.values());
         showResults(results);
       } else {
