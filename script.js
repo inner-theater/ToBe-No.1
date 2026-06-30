@@ -353,10 +353,19 @@
   async function fetchLobbyRooms() {
     const { data } = await supabase.from('rooms').select('*').eq('is_active', true).order('created_at', { ascending: false });
     lobbyRooms = data || [];
-    // 为每个房间附加人数
+    // 为每个房间附加人数，同时清理空房间
+    const clean = [];
     for (const room of lobbyRooms) {
       const { count } = await supabase.from('room_members').select('*', { count: 'exact', head: true }).eq('room_id', room.id);
       room._memberCount = count || 0;
+      if (!count || count === 0) clean.push(room.id);
+    }
+    // 删除空房间（兜底清理）
+    if (clean.length > 0) {
+      lobbyRooms = lobbyRooms.filter(r => !clean.includes(r.id));
+      for (const id of clean) {
+        supabase.from('rooms').delete().eq('id', id).then(()=>{}).catch(()=>{});
+      }
     }
     return lobbyRooms;
   }
@@ -955,6 +964,11 @@
     const wasOwner = isRoomOwner;
     await supabase.from('room_members').delete().eq('user_token', playerToken).eq('room_id', roomId);
     if (wasOwner) await promoteNextOwner();
+    // 查询当前房间是否还有人，没人则直接删掉房间（兜底，防止 trigger 未生效）
+    const { count } = await supabase.from('room_members').select('*', { count: 'exact', head: true }).eq('room_id', roomId);
+    if (!count || count === 0) {
+      await supabase.from('rooms').delete().eq('id', roomId).then(()=>{}).catch(()=>{});
+    }
     stopAllIntervals();
     currentRoom = null; isRoomOwner = false; roomId = null; allPlayers = [];
     localStorage.removeItem('active_room_id');
