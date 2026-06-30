@@ -551,6 +551,10 @@
     stopAllIntervals();
     if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null; }
     supabase.from('users').update({ is_online: false }).eq('player_token', playerToken).then(()=>{}).catch(()=>{});
+    // 清空上轮游戏状态
+    gameResults.clear();
+    gameActive = false; gameFinished = false;
+    clickCount = 0;
     // 持久化房间状态（刷新后能恢复）
     localStorage.setItem('active_room_id', room.id);
     localStorage.setItem('active_room_name', room.name);
@@ -636,13 +640,17 @@
   // ===================== 游戏（广播模式，不依赖 players 表）=====================
   startBtn.addEventListener('click', async () => {
     if (!isRoomOwner) return;
+    // 重新拉取当前房间人员（防止上一轮残留）
+    await fetchWaitingPlayers();
     if (allPlayers.length < 2) return showToast('至少 2 人才能开始！');
 
     startBtn.disabled = true;
     startBtn.textContent = '启动中...';
-    // 清空上轮结果
+    // 彻底清空上轮所有数据
     gameResults.clear();
-    // 广播游戏开始 + 玩家名单（让每个人知道该等谁）
+    // 清除 DB 中上轮结果
+    supabase.from('room_members').update({ result_json: null }).eq('room_id', roomId).then(()=>{}).catch(()=>{});
+    // 广播游戏开始 + 玩家名单
     gameChannel.send({
       type: 'broadcast', event: 'game_start',
       payload: { players: allPlayers.map(p => ({ name: p.name, player_token: p.player_token })) }
@@ -895,14 +903,19 @@
   }
 
   resetBtn.addEventListener('click', async () => {
-    await supabase.from('players').delete().eq('room_id', roomId);
-    clickCount=0; gameActive=false; gameFinished=false;
+    gameResults.clear();
+    gameActive = false; gameFinished = false;
+    clickCount = 0;
+    // 广播通知所有人重置
+    gameChannel.send({ type: 'broadcast', event: 'game_reset', payload: {} });
     enterWaitingRoom(currentRoom);
   });
 
   replayBtn.addEventListener('click', async () => {
-    await supabase.from('players').delete().eq('room_id', roomId);
-    clickCount=0; gameActive=false; gameFinished=false;
+    gameResults.clear();
+    gameActive = false; gameFinished = false;
+    clickCount = 0;
+    gameChannel.send({ type: 'broadcast', event: 'game_reset', payload: {} });
     enterWaitingRoom(currentRoom);
   });
 
@@ -1133,6 +1146,15 @@
       })
       .on('broadcast', { event: 'owner_changed' }, () => {
         fetchWaitingPlayers();
+      })
+      .on('broadcast', { event: 'game_reset' }, () => {
+        // 房主开启了新一轮，所有人回到等待室
+        gameResults.clear();
+        gameActive = false;
+        gameFinished = false;
+        clickCount = 0;
+        stopAllIntervals();
+        enterWaitingRoom(currentRoom);
       })
       .subscribe();
   }
