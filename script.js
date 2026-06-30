@@ -867,7 +867,7 @@
   const BUFFS = [
     { name:'🚀 火箭加速', desc:'总分翻倍！', icon:'🚀', fn: s=>s*2 },
     { name:'💣 哑弹', desc:'扣5分...', icon:'💣', fn: s=>Math.max(0,s-5) },
-    { name:'🎯 精准打击', desc:'+5分', icon:'🎯', fn: s=>s+5 },
+    { name:'🎯 精准打击', desc:'不是第一则+5分', icon:'🎯', fn: s=>s },
     { name:'🛡️ 无事发生', desc:'维持原分', icon:'🛡️', fn: s=>s },
   ];
 
@@ -947,10 +947,14 @@
 
   async function showResults(players) {
     const sorted = (players||[]).sort((a,b)=>b.final_score-a.final_score);
-    // 排名修正：第一名 -10，第二名 +5（防止一家独大）
-    if (sorted.length >= 1) sorted[0].final_score = Math.max(0, sorted[0].final_score - 10);
-    if (sorted.length >= 2) sorted[1].final_score = sorted[1].final_score + 5;
-    // 重新排序确保显示顺序正确
+    // 精准打击：抽中此 Buff 的玩家，只要不是点击次数最高者 → 额外 +5
+    const maxClicks = Math.max(...sorted.map(p => p.click_count || 0), 0);
+    sorted.forEach(p => {
+      if ((p.buff || '').includes('精准打击') && (p.click_count || 0) < maxClicks) {
+        p.final_score += 5;
+      }
+    });
+    // 重新排序
     sorted.sort((a,b)=>b.final_score-a.final_score);
     // 获取头像：优先 onlineUsers（大厅在线数据），兜底从 users 表查
     const tokenMap = {};
