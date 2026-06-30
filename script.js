@@ -630,7 +630,7 @@
       `<div class="prop-intro-item">
         <span class="prop-intro-icon">${b.icon}</span>
         <div class="prop-intro-text">
-          <div class="prop-intro-name">${b.name}</div>
+          <div class="prop-intro-name">${b.name} <span style="font-size:.7rem;color:var(--text-muted)">${b.w}%</span></div>
           <div class="prop-intro-desc">${b.desc}</div>
         </div>
       </div>`
@@ -865,14 +865,19 @@
 
   // Buff 系统
   const BUFFS = [
-    { name:'🚀 火箭加速', desc:'总分翻倍！', icon:'🚀', fn: s=>s*2 },
-    { name:'💣 哑弹', desc:'扣5分...', icon:'💣', fn: s=>Math.max(0,s-5) },
-    { name:'🎯 精准打击', desc:'不是第一则+5分', icon:'🎯', fn: s=>s },
-    { name:'🛡️ 无事发生', desc:'维持原分', icon:'🛡️', fn: s=>s },
+    { name:'🚀 火箭加速', desc:'总分翻倍！', icon:'🚀', fn: s=>s*2, w:10 },
+    { name:'💣 哑弹', desc:'扣5分...', icon:'💣', fn: s=>Math.max(0,s-5), w:10 },
+    { name:'🎯 精准打击', desc:'不是第一则+5分', icon:'🎯', fn: s=>s, w:10 },
+    { name:'🛡️ 无事发生', desc:'维持原分', icon:'🛡️', fn: s=>s, w:70 },
   ];
+  const BUFF_ROULETTE = (() => {
+    let arr = [];
+    BUFFS.forEach((b, i) => { for (let j = 0; j < b.w; j++) arr.push(i); });
+    return arr;
+  })();
 
   async function calculateAndRevealBuff() {
-    const b = BUFFS[Math.floor(Math.random()*BUFFS.length)];
+    const b = BUFFS[BUFF_ROULETTE[Math.floor(Math.random() * BUFF_ROULETTE.length)]];
     const finalScore = b.fn(clickCount, allPlayers, { player_token: playerToken });
     buffIconEl.textContent = b.icon;
     buffNameEl.textContent = b.name;
