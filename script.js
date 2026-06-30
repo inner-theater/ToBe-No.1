@@ -716,7 +716,7 @@
     if (names === lastPlayerNames) return;
     lastPlayerNames = names;
     playerListEl.innerHTML = allPlayers.map(p =>
-      `<span class="player-tag${p.is_owner ? ' owner-tag' : ''}">${p.is_owner ? '👑 ' : '⚔️ '}${escapeHTML(p.name)}</span>`
+      `<span class="player-tag${p.is_owner ? ' owner-tag' : ''}">${p.is_owner ? '👑 ' : ''}${escapeHTML(p.name)}</span>`
     ).join('');
   }
 
@@ -918,11 +918,11 @@
 
     rankingList.innerHTML = sorted.map((p,i)=>{
       const cls = i===sorted.length-1&&sorted.length>1?'rank-item last-place':'rank-item';
-      const medal = i<3?['🥇','🥈','🥉'][i]:'';
+      const badge = i<3 ? ['🥇','🥈','🥉'][i] : `${i+1}`;
       const info = tokenMap[p.player_token] || {};
       const avatarImg = info.avatar ? `<img src="${info.avatar}" class="rank-avatar">` : '<span class="rank-avatar-empty">👤</span>';
       return `<div class="${cls}">
-        <span class="rank-badge">${medal} #${i+1}</span>
+        <span class="rank-badge">${badge}</span>
         <div class="rank-avatar-wrap">${avatarImg}</div>
         <div class="rank-info">
           <div class="rank-name">${escapeHTML(p.name)}</div>
@@ -1037,16 +1037,13 @@
         const sorted = players.sort((a,b) => b.score - a.score);
         const dt = new Date(r.played_at);
         const dateStr = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')} ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`;
-        const winner = sorted[0] || {name:'?'};
-        const loser = sorted[sorted.length-1] || {name:'?'};
-        // 生成排名详情 HTML（默认隐藏）
+        // 生成排名详情 HTML
         const detailHTML = sorted.map((p,i) => {
-          const medal = i===0 ? '🥇' : (i===1 ? '🥈' : (i===2 ? '🥉' : ''));
+          const badge = i===0 ? '🥇' : (i===1 ? '🥈' : (i===2 ? '🥉' : `${i+1}`));
           const isMe = (p.name === myNick || p.nickname === myNick);
-          const extra = i === sorted.length-1 ? ' 🎤' : '';
           return `<div class="h-detail-row${isMe ? ' h-highlight' : ''}">
-            <span class="h-detail-rank">${medal} #${i+1}</span>
-            <span class="h-detail-name">${escapeHTML(p.name||p.nickname)}${isMe?' (我)':''}${extra}</span>
+            <span class="h-detail-rank">${badge}</span>
+            <span class="h-detail-name">${escapeHTML(p.name||p.nickname)}${isMe?' (我)':''}</span>
             <span class="h-detail-stats">${escapeHTML(p.buff||'')} · ${p.clicks}次点击 · ${p.score}分</span>
           </div>`;
         }).join('');
@@ -1055,9 +1052,6 @@
             <span class="h-date">${dateStr}</span>
             <span class="h-room">${escapeHTML(r.room_name)}</span>
             <span class="h-count">${sorted.length}人</span>
-          </div>
-          <div class="h-summary">
-            冠军 <b>${escapeHTML(winner.name||winner.nickname)}</b> · 主持 <b>${escapeHTML(loser.name||loser.nickname)}</b>
           </div>
           <div class="h-detail">${detailHTML}</div>
         </div>`;
@@ -1336,6 +1330,13 @@
       supabase.from('users').update({ is_online: false, last_seen: new Date().toISOString() }).eq('player_token', playerToken);
     } else if (document.visibilityState === 'visible' && myProfile && playerToken) {
       supabase.from('users').update({ is_online: true, last_seen: new Date().toISOString() }).eq('player_token', playerToken);
+      // 息屏/切后台超过 30 秒回来自动刷新，避免状态不同步
+      if (window._hiddenAt && Date.now() - window._hiddenAt > 30000) {
+        location.reload();
+      }
+    }
+    if (document.visibilityState === 'hidden') {
+      window._hiddenAt = Date.now();
     }
   });
 
