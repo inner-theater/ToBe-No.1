@@ -1786,7 +1786,7 @@
     const me = arenaPlayers[playerToken];
     if (!me || !me.alive) return;
     const now = Date.now();
-    if (now - lastItemTime < 600) return;
+    if (now - lastItemTime < 1200) return;
     lastItemTime = now;
 
     // 发射方向：当前摇杆方向，如果不动则用上次方向
@@ -1850,7 +1850,7 @@
       if (!proj.alive) continue;
 
       // 超时移除（2.5秒）
-      if (now - proj.createdAt > 2500) { removeProjectile(i); continue; }
+      if (now - proj.createdAt > 1500) { removeProjectile(i); continue; }
 
       proj.x += proj.vx * dt;
       proj.y += proj.vy * dt;
@@ -1866,7 +1866,7 @@
       if (proj.y > stageH) { proj.y = stageH; proj.vy = -Math.abs(proj.vy) * 0.6; bounced = true; }
       if (bounced) {
         proj.bounces++;
-        if (proj.bounces >= 3) { removeProjectile(i); continue; }
+        if (proj.bounces >= 2) { removeProjectile(i); continue; }
       }
 
       // 出界移除（简化判断）
