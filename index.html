@@ -213,22 +213,21 @@
       <button id="arena-quit-btn" class="btn btn-secondary btn-small">退出</button>
     </div>
     <div class="arena-stage" id="arena-stage"></div>
-    <!-- 方向圆盘 (移动端) -->
-    <div class="dpad-container" id="dpad-container">
-      <div class="dpad" id="dpad">
-        <button class="dpad-btn dpad-up" data-dir="0,-1">▲</button>
-        <button class="dpad-btn dpad-left" data-dir="-1,0">◀</button>
-        <div class="dpad-center">🎮</div>
-        <button class="dpad-btn dpad-right" data-dir="1,0">▶</button>
-        <button class="dpad-btn dpad-down" data-dir="0,1">▼</button>
+    <!-- 圆形摇杆 (移动端) -->
+    <div class="joystick-container" id="joystick-container">
+      <div class="joystick-base" id="joystick-base">
+        <div class="joystick-knob" id="joystick-knob"></div>
       </div>
     </div>
-    <!-- 道具栏 -->
-    <div class="arena-items" id="arena-items">
-      <button class="arena-item-btn" data-item="tomato" title="番茄">🍅</button>
-      <button class="arena-item-btn" data-item="egg" title="鸡蛋">🥚</button>
-      <button class="arena-item-btn" data-item="bomb" title="炸弹">💣</button>
-      <button class="arena-item-btn" data-item="rocket" title="火箭">🚀</button>
+    <!-- 弹药选择 + 发射按钮 -->
+    <div class="ammo-bar" id="ammo-bar">
+      <div class="ammo-selector" id="ammo-selector">
+        <button class="ammo-btn ammo-active" data-ammo="tomato" title="番茄">🍅</button>
+        <button class="ammo-btn" data-ammo="egg" title="鸡蛋">🥚</button>
+        <button class="ammo-btn" data-ammo="bomb" title="炸弹">💣</button>
+        <button class="ammo-btn" data-ammo="rocket" title="火箭">🚀</button>
+      </div>
+      <button id="fire-btn" class="fire-btn">🔥 发射</button>
     </div>
   </div>
 

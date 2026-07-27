@@ -310,20 +310,23 @@ body::before{
 .arena-hp-bar { width: 48px; height: 4px; background: rgba(255,255,255,.1); border-radius: 2px; overflow: hidden; }
 .arena-hp-fill { height: 100%; background: var(--green-glow); transition: width .3s ease, background .3s ease; }
 
-.dpad-container { position: absolute; bottom: 20px; left: 20px; z-index: 100; }
-.dpad { display: grid; grid-template-columns: repeat(3, 48px); grid-template-rows: repeat(3, 48px); gap: 2px; }
-.dpad-btn { background: rgba(18,18,42,.85); border: 1px solid var(--border-color); border-radius: 10px; color: var(--text-primary); font-size: 1.1rem; cursor: pointer; display: flex; align-items: center; justify-content: center; user-select: none; -webkit-user-select: none; touch-action: none; transition: var(--transition); }
-.dpad-btn:active { background: var(--neon-purple); border-color: var(--neon-purple); box-shadow: 0 0 12px rgba(168,85,247,.5); }
-.dpad-center { display: flex; align-items: center; justify-content: center; font-size: 1.1rem; opacity: .3; }
-.dpad-up { grid-column: 2; grid-row: 1; }
-.dpad-left { grid-column: 1; grid-row: 2; }
-.dpad-right { grid-column: 3; grid-row: 2; }
-.dpad-down { grid-column: 2; grid-row: 3; }
+/* ===== 圆形摇杆 ===== */
+.joystick-container { position: absolute; bottom: 24px; left: 24px; z-index: 100; }
+.joystick-base { width: 130px; height: 130px; border-radius: 50%; background: rgba(18,18,42,.75); border: 2px solid rgba(168,85,247,.35); box-shadow: 0 0 30px rgba(168,85,247,.15), inset 0 0 40px rgba(0,0,0,.3); position: relative; touch-action: none; cursor: pointer; }
+.joystick-knob { width: 52px; height: 52px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #a855f7, #7c3aed); border: 2px solid rgba(255,255,255,.3); box-shadow: 0 0 16px rgba(168,85,247,.5); position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); pointer-events: none; transition: none; }
+.joystick-base:active .joystick-knob { border-color: rgba(255,255,255,.6); box-shadow: 0 0 24px rgba(168,85,247,.7); }
 
-.arena-items { position: absolute; bottom: 24px; right: 20px; display: flex; gap: 8px; z-index: 100; }
-.arena-item-btn { width: 44px; height: 44px; font-size: 1.3rem; border-radius: 50%; border: 2px solid var(--border-color); background: rgba(18,18,42,.85); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: var(--transition); touch-action: none; }
-.arena-item-btn:active { transform: scale(.9); border-color: var(--neon-purple); }
-.arena-item-btn.armed { border-color: var(--gold); box-shadow: 0 0 14px rgba(251,191,36,.5); transform: scale(1.15); }
+/* ===== 弹药栏 + 发射按钮 ===== */
+.ammo-bar { position: absolute; bottom: 28px; right: 20px; display: flex; flex-direction: column; align-items: center; gap: 10px; z-index: 100; }
+.ammo-selector { display: flex; gap: 6px; background: rgba(18,18,42,.75); padding: 8px 12px; border-radius: 28px; border: 1px solid rgba(255,255,255,.1); }
+.ammo-btn { width: 40px; height: 40px; font-size: 1.2rem; border-radius: 50%; border: 2px solid transparent; background: transparent; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all .2s ease; touch-action: none; opacity: .5; }
+.ammo-btn.ammo-active { opacity: 1; border-color: var(--neon-purple); background: rgba(168,85,247,.15); box-shadow: 0 0 12px rgba(168,85,247,.3); transform: scale(1.15); }
+.ammo-btn:active { transform: scale(.85); }
+.fire-btn { padding: 8px 24px; font-size: .9rem; font-weight: 700; border-radius: 24px; border: none; background: linear-gradient(135deg, #ef4444, #dc2626); color: #fff; cursor: pointer; box-shadow: 0 0 20px rgba(239,68,68,.4); transition: all .15s ease; touch-action: none; letter-spacing: 1px; }
+.fire-btn:active { transform: scale(.9); box-shadow: 0 0 30px rgba(239,68,68,.6); }
+
+/* ===== 弹射物 ===== */
+.arena-projectile { position: absolute; font-size: 1.5rem; pointer-events: none; z-index: 60; filter: drop-shadow(0 0 6px rgba(255,255,255,.5)); transition: none; }
 
 .kill-feed { position: absolute; top: 56px; right: 12px; display: flex; flex-direction: column; gap: 4px; z-index: 50; pointer-events: none; max-width: 80%; }
 .kill-feed-item { padding: 6px 12px; background: rgba(18,18,42,.92); border: 1px solid var(--red-glow); border-radius: 8px; font-size: .75rem; color: var(--text-primary); animation: killFeedIn .3s ease; }
@@ -337,10 +340,12 @@ body::before{
   .arena-timer { font-size: 1.2rem; }
   .arena-avatar-circle { width: 40px; height: 40px; }
   .arena-hp-bar { width: 40px; }
-  .dpad { grid-template-columns: repeat(3, 42px); grid-template-rows: repeat(3, 42px); }
-  .dpad-container { bottom: 14px; left: 14px; }
-  .arena-items { bottom: 18px; right: 14px; gap: 6px; }
-  .arena-item-btn { width: 38px; height: 38px; font-size: 1.1rem; }
+  .joystick-base { width: 110px; height: 110px; }
+  .joystick-container { bottom: 14px; left: 14px; }
+  .joystick-knob { width: 44px; height: 44px; }
+  .ammo-bar { bottom: 18px; right: 14px; }
+  .ammo-btn { width: 34px; height: 34px; font-size: 1rem; }
+  .fire-btn { padding: 6px 18px; font-size: .8rem; }
   .kill-feed { top: 50px; right: 8px; }
   .kill-feed-item { font-size: .7rem; padding: 4px 10px; }
   .arena-avatar-nick { font-size: .6rem; }
@@ -350,8 +355,10 @@ body::before{
   .arena-timer { font-size: 1rem; min-width: 60px; }
   .arena-avatar-circle { width: 34px; height: 34px; }
   .arena-hp-bar { width: 34px; height: 3px; }
-  .dpad { grid-template-columns: repeat(3, 36px); grid-template-rows: repeat(3, 36px); }
-  .arena-item-btn { width: 32px; height: 32px; font-size: .95rem; }
+  .joystick-base { width: 90px; height: 90px; }
+  .joystick-knob { width: 36px; height: 36px; }
+  .ammo-btn { width: 28px; height: 28px; font-size: .85rem; }
+  .fire-btn { padding: 4px 14px; font-size: .75rem; }
 }
 
 /* ====== 响应式 ====== */

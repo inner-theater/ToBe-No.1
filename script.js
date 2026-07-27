@@ -114,7 +114,8 @@
   let arenaMoveDir    = { x: 0, y: 0 }; // 方向圆盘当前方向
   let arenaDuration   = 600; // 倒计时秒数
   let arenaStartTime  = 0; // 游戏开始时间戳
-  let arenaArmedItem  = null; // 已选中的道具（快速投掷）
+  let arenaArmedItem  = null; // 保留引用
+  let currentAmmo     = 'tomato'; // 当前选中的弹药类型
 
   // ===================== Supabase =====================
   const supabase = window.supabase.createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.key);
@@ -1516,6 +1517,51 @@
         showToast('房间已到期，自动解散');
         exitRoomToLobby();
       })
+      // ===== 新增：弹射物系统事件 =====
+      .on('broadcast', { event: 'arena_shoot' }, payload => {
+        const d = payload.payload;
+        if (d.from === playerToken) return; // 自己发射的已经在本地处理了
+        if (!arenaGameActive) return;
+        // 在远程玩家屏幕上也创建弹射物
+        const proj = {
+          x: d.x, y: d.y, vx: d.vx, vy: d.vy,
+          ownerToken: d.from, ammoType: d.ammo,
+          alive: true, el: null
+        };
+        const el = document.createElement('span');
+        el.className = 'arena-projectile';
+        el.textContent = ITEM_EFFECTS[d.ammo] ? ITEM_EFFECTS[d.ammo].emoji : '🍅';
+        el.style.left = d.x + 'px';
+        el.style.top = d.y + 'px';
+        arenaStage.appendChild(el);
+        proj.el = el;
+        arenaProjectiles.push(proj);
+      })
+      .on('broadcast', { event: 'arena_projectile_hit' }, payload => {
+        const d = payload.payload;
+        if (d.to === playerToken) {
+          // 我被打中了
+          const me = arenaPlayers[playerToken];
+          if (!me || !me.alive) return;
+          me.hp = Math.max(0, me.hp - 1);
+          me.lastHitBy = d.from;
+          me.lastHitTime = Date.now();
+          me.hitHistory.push({ attacker: d.from, time: Date.now() });
+          updateArenaHpDisplay(playerToken);
+          if (me.hp <= 0) {
+            const assistCutoff = Date.now() - 10000;
+            const assistants = [...new Set(
+              me.hitHistory.filter(h => h.time > assistCutoff && h.attacker !== d.from && h.attacker !== playerToken)
+                .map(h => h.attacker)
+            )];
+            gameChannel.send({
+              type: 'broadcast', event: 'arena_eliminated',
+              payload: { token: playerToken, killed_by: d.from, assistants, time: Date.now() }
+            });
+            arenaEliminatePlayer(playerToken, d.from, assistants);
+          }
+        }
+      })
       .subscribe();
   }
 
@@ -1541,6 +1587,8 @@
     arenaStartTime = Date.now();
     arenaMoveDir = { x: 0, y: 0 };
     arenaArmedItem = null;
+    currentAmmo = 'tomato';
+    arenaProjectiles = [];
 
     // 获取当前用户头像
     const myAvatar = (myProfile && myProfile.avatar_b64) ? myProfile.avatar_b64 : '';
@@ -1607,34 +1655,49 @@
       const stageH = arenaStage.clientHeight || 400;
       const avatarSize = 52;
       const moveSpeed = 2.8;
+      const bounce = 0.65;
+      const margin = 2;
+      const maxVel = 5;
 
-      // 本地玩家：方向圆盘控制速度
+      // 本地玩家：摇杆控制速度
       const me = arenaPlayers[playerToken];
       if (me && me.alive) {
         me.vx = arenaMoveDir.x * moveSpeed;
         me.vy = arenaMoveDir.y * moveSpeed;
+        me.x += me.vx * dt;
+        me.y += me.vy * dt;
       }
 
+      // 远程玩家：插值 + 派生速度用于反弹
       const tokens = Object.keys(arenaPlayers);
+      for (const t of tokens) {
+        if (t === playerToken) continue;
+        const p = arenaPlayers[t];
+        if (!p.alive) continue;
+        const lerp = 0.18;
+        const prevX = p.x, prevY = p.y;
+        p.x += (p.targetX - p.x) * lerp * dt;
+        p.y += (p.targetY - p.y) * lerp * dt;
+        // 派生速度（用于反弹效果）
+        p.vx = (p.x - prevX) * dt;
+        p.vy = (p.y - prevY) * dt;
+      }
+
+      // 墙壁反弹（所有存活玩家）
       for (const t of tokens) {
         const p = arenaPlayers[t];
         if (!p.alive) continue;
-        if (t === playerToken) {
-          p.x += p.vx * dt;
-          p.y += p.vy * dt;
-        } else {
-          // 远程玩家：插值靠近目标位置
-          const lerp = 0.18;
-          p.x += (p.targetX - p.x) * lerp * dt;
-          p.y += (p.targetY - p.y) * lerp * dt;
+        let bounced = false;
+        if (p.x < margin) { p.x = margin; p.vx = Math.abs(p.vx) * bounce; bounced = true; }
+        if (p.x > stageW - avatarSize - margin) { p.x = stageW - avatarSize - margin; p.vx = -Math.abs(p.vx) * bounce; bounced = true; }
+        if (p.y < margin) { p.y = margin; p.vy = Math.abs(p.vy) * bounce; bounced = true; }
+        if (p.y > stageH - avatarSize - 16 - margin) { p.y = stageH - avatarSize - 16 - margin; p.vy = -Math.abs(p.vy) * bounce; bounced = true; }
+        if (bounced && t === playerToken) {
+          showBounceEffect(p.x, p.y);
         }
-        if (p.x < 0) p.x = 0;
-        if (p.x > stageW - avatarSize) p.x = stageW - avatarSize;
-        if (p.y < 0) p.y = 0;
-        if (p.y > stageH - avatarSize - 16) p.y = stageH - avatarSize - 16;
       }
 
-      // 碰撞检测
+      // 玩家碰撞
       for (let i = 0; i < tokens.length; i++) {
         for (let j = i + 1; j < tokens.length; j++) {
           const a = arenaPlayers[tokens[i]], b = arenaPlayers[tokens[j]];
@@ -1649,9 +1712,15 @@
             a.y -= ny * overlap * 0.5;
             b.x += nx * overlap * 0.5;
             b.y += ny * overlap * 0.5;
+            // 碰撞反弹
+            a.vx = -nx * 2; a.vy = -ny * 2;
+            b.vx = nx * 2; b.vy = ny * 2;
           }
         }
       }
+
+      // 弹射物碰撞检测
+      updateArenaProjectiles();
 
       for (const t of tokens) {
         const p = arenaPlayers[t];
@@ -1661,6 +1730,146 @@
       arenaPhysicsRaf = requestAnimationFrame(tick);
     }
     arenaPhysicsRaf = requestAnimationFrame(tick);
+  }
+
+  // ===================== 弹射物系统 =====================
+  let arenaProjectiles = [];
+
+  function fireArenaProjectile(ammoType) {
+    if (!arenaGameActive) return;
+    const me = arenaPlayers[playerToken];
+    if (!me || !me.alive) return;
+    const now = Date.now();
+    if (now - lastItemTime < 600) return;
+    lastItemTime = now;
+
+    // 发射方向：摇杆方向，如果不动则用上一个方向
+    let dx = arenaMoveDir.x;
+    let dy = arenaMoveDir.y;
+    if (dx === 0 && dy === 0) {
+      dx = 0; dy = -1; // 默认向上
+    }
+    const len = Math.sqrt(dx*dx + dy*dy);
+    if (len < 0.01) { dx = 0; dy = -1; }
+    else { dx /= len; dy /= len; }
+
+    const speed = 6;
+    const avatarSize = 52;
+    const startX = me.x + avatarSize/2 + dx * 32;
+    const startY = me.y + avatarSize/2 + dy * 32;
+
+    const proj = {
+      x: startX, y: startY,
+      vx: dx * speed, vy: dy * speed,
+      ownerToken: playerToken,
+      ammoType: ammoType,
+      el: null,
+      alive: true
+    };
+
+    // 创建 DOM 元素
+    const el = document.createElement('span');
+    el.className = 'arena-projectile';
+    el.textContent = ITEM_EFFECTS[ammoType] ? ITEM_EFFECTS[ammoType].emoji : '🍅';
+    el.style.left = startX + 'px';
+    el.style.top = startY + 'px';
+    arenaStage.appendChild(el);
+    proj.el = el;
+    arenaProjectiles.push(proj);
+
+    // 广播
+    if (gameChannel) {
+      gameChannel.send({
+        type: 'broadcast', event: 'arena_shoot',
+        payload: { from: playerToken, x: startX, y: startY, vx: proj.vx, vy: proj.vy, ammo: ammoType }
+      });
+    }
+  }
+
+  function updateArenaProjectiles() {
+    const stageW = arenaStage.clientWidth || 400;
+    const stageH = arenaStage.clientHeight || 400;
+    const avatarSize = 52;
+
+    for (let i = arenaProjectiles.length - 1; i >= 0; i--) {
+      const proj = arenaProjectiles[i];
+      if (!proj.alive) continue;
+
+      proj.x += proj.vx;
+      proj.y += proj.vy;
+
+      // 墙壁反弹
+      if (proj.x < 0 || proj.x > stageW) proj.vx *= -0.5;
+      if (proj.y < 0 || proj.y > stageH) proj.vy *= -0.5;
+
+      // 出界移除
+      if (proj.x < -50 || proj.x > stageW + 50 || proj.y < -50 || proj.y > stageH + 50 ||
+          proj.x < 0 && (proj.vx < 0) || proj.x > stageW && (proj.vx > 0) ||
+          proj.y < 0 && (proj.vy < 0) || proj.y > stageH && (proj.vy > 0)) {
+        removeProjectile(i);
+        continue;
+      }
+
+      // 碰撞检测：与所有存活玩家
+      const tokens = Object.keys(arenaPlayers);
+      let hit = false;
+      for (const t of tokens) {
+        const p = arenaPlayers[t];
+        if (!p.alive || t === proj.ownerToken) continue;
+        const cx = p.x + avatarSize/2, cy = p.y + avatarSize/2;
+        const dx = proj.x - cx, dy = proj.y - cy;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        if (dist < 28) { // 命中
+          hit = true;
+          // 扣血
+          p.hp = Math.max(0, p.hp - 1);
+          updateArenaHpDisplay(t);
+          // 击中动画
+          const hitEl = document.createElement('span');
+          hitEl.className = 'hit-effect';
+          hitEl.textContent = ITEM_EFFECTS[proj.ammoType] ? ITEM_EFFECTS[proj.ammoType].emoji : '💥';
+          hitEl.style.left = (p.x + avatarSize/2) + 'px';
+          hitEl.style.top = (p.y + avatarSize/2) + 'px';
+          arenaStage.appendChild(hitEl);
+          setTimeout(() => hitEl.remove(), 600);
+          p.el.classList.add('avatar-impact');
+          setTimeout(() => p.el.classList.remove('avatar-impact'), 500);
+
+          // 广播命中
+          if (gameChannel) {
+            gameChannel.send({
+              type: 'broadcast', event: 'arena_projectile_hit',
+              payload: { from: proj.ownerToken, to: t, ammo: proj.ammoType }
+            });
+          }
+
+          // 淘汰判定
+          if (p.hp <= 0) {
+            arenaEliminatePlayer(t, proj.ownerToken, []);
+          }
+          break;
+        }
+      }
+
+      if (hit) {
+        removeProjectile(i);
+      } else {
+        proj.el.style.left = proj.x + 'px';
+        proj.el.style.top = proj.y + 'px';
+      }
+    }
+  }
+
+  function removeProjectile(index) {
+    const proj = arenaProjectiles[index];
+    if (!proj) return;
+    proj.alive = false;
+    if (proj.el && proj.el.parentNode) proj.el.remove();
+    arenaProjectiles.splice(index, 1);
+  }
+
+  function showBounceEffect(x, y) {
+    // 简单的屏幕震动
   }
 
   function startArenaTimer() {
@@ -1691,31 +1900,60 @@
   }
 
   function setupArenaJoystick() {
-    const dpadBtns = document.querySelectorAll('.dpad-btn');
-    const activeDirs = new Set();
-    dpadBtns.forEach(btn => {
-      const dir = btn.dataset.dir.split(',').map(Number);
-      const dirKey = dir.join(',');
-      const press = (e) => { e.preventDefault(); activeDirs.add(dirKey); updateJoystickDir(activeDirs); };
-      const release = (e) => { e.preventDefault(); activeDirs.delete(dirKey); updateJoystickDir(activeDirs); };
-      btn.addEventListener('touchstart', press, { passive: false });
-      btn.addEventListener('touchend', release, { passive: false });
-      btn.addEventListener('touchcancel', release, { passive: false });
-      btn.addEventListener('mousedown', press);
-      btn.addEventListener('mouseup', release);
-      btn.addEventListener('mouseleave', release);
-    });
-  }
+    const base = document.getElementById('joystick-base');
+    const knob = document.getElementById('joystick-knob');
+    if (!base) return;
+    const radius = base.offsetWidth / 2;
+    const knobR = knob.offsetWidth / 2;
+    const maxDist = radius - knobR - 4;
+    let dragging = false;
+    let touchId = null;
 
-  function updateJoystickDir(activeDirs) {
-    let x = 0, y = 0;
-    activeDirs.forEach(d => {
-      const [dx, dy] = d.split(',').map(Number);
-      x += dx; y += dy;
-    });
-    if (x !== 0 && y !== 0) { x *= 0.707; y *= 0.707; }
-    arenaMoveDir.x = x;
-    arenaMoveDir.y = y;
+    function getPos(e) {
+      const rect = base.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      let clientX, clientY;
+      if (e.touches) {
+        const touch = Array.from(e.touches).find(t => t.identifier === touchId) || e.touches[0];
+        if (!touch) return null;
+        clientX = touch.clientX;
+        clientY = touch.clientY;
+      } else {
+        clientX = e.clientX;
+        clientY = e.clientY;
+      }
+      let dx = clientX - cx;
+      let dy = clientY - cy;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      if (dist < 8) {
+        knob.style.transform = 'translate(-50%,-50%)';
+        arenaMoveDir.x = 0;
+        arenaMoveDir.y = 0;
+        return;
+      }
+      if (dist > maxDist) { dx = dx / dist * maxDist; dy = dy / dist * maxDist; }
+      knob.style.transform = `translate(${-50 + dx / radius * 50}%,${-50 + dy / radius * 50}%)`;
+      arenaMoveDir.x = dx / maxDist;
+      arenaMoveDir.y = dy / maxDist;
+    }
+
+    function resetJoystick() {
+      dragging = false;
+      touchId = null;
+      knob.style.transform = 'translate(-50%,-50%)';
+      arenaMoveDir.x = 0;
+      arenaMoveDir.y = 0;
+    }
+
+    base.addEventListener('mousedown', (e) => { e.preventDefault(); dragging = true; getPos(e); });
+    window.addEventListener('mousemove', (e) => { if (dragging) getPos(e); });
+    window.addEventListener('mouseup', resetJoystick);
+
+    base.addEventListener('touchstart', (e) => { e.preventDefault(); const t = e.changedTouches[0]; touchId = t.identifier; dragging = true; getPos(e); }, { passive: false });
+    window.addEventListener('touchmove', (e) => { if (dragging) getPos(e); }, { passive: false });
+    window.addEventListener('touchend', (e) => { if (touchId !== null && !Array.from(e.touches).some(t => t.identifier === touchId)) resetJoystick(); });
+    window.addEventListener('touchcancel', resetJoystick);
   }
 
   let arenaKeyboardHandler = null;
@@ -1736,6 +1974,11 @@
         if (x !== 0 && y !== 0) { x *= 0.707; y *= 0.707; }
         arenaMoveDir.x = x;
         arenaMoveDir.y = y;
+      }
+      // 空格发射
+      if (k === ' ' || k === 'spacebar') {
+        e.preventDefault();
+        if (down) fireArenaProjectile(currentAmmo);
       }
     }
     arenaKeyboardHandler = { down: e => onKey(e, true), up: e => onKey(e, false) };
@@ -1759,17 +2002,19 @@
     if (!me || !me.alive) return;
     const target = arenaPlayers[playerInfo.player_token];
     if (!target || !target.alive) return;
-    if (arenaArmedItem) {
-      // 快速投掷
-      arenaThrowItem(playerInfo, arenaArmedItem);
-      arenaArmedItem = null;
-      document.querySelectorAll('.arena-item-btn').forEach(b => b.classList.remove('armed'));
-    } else {
-      // 弹出道具选择
-      selectedTarget = playerInfo;
-      itemTargetName.textContent = playerInfo.name;
-      itemPopup.style.display = 'flex';
-    }
+    // 点击其他玩家 → 朝他的方向发射一枚炮弹
+    const avatarSize = 52;
+    const dx = (target.x + avatarSize/2) - (me.x + avatarSize/2);
+    const dy = (target.y + avatarSize/2) - (me.y + avatarSize/2);
+    const len = Math.sqrt(dx*dx + dy*dy);
+    if (len < 1) return;
+    // 临时设置摇杆方向到目标方向，然后发射
+    const savedDir = { x: arenaMoveDir.x, y: arenaMoveDir.y };
+    arenaMoveDir.x = dx / len;
+    arenaMoveDir.y = dy / len;
+    fireArenaProjectile(currentAmmo);
+    arenaMoveDir.x = savedDir.x;
+    arenaMoveDir.y = savedDir.y;
   }
 
   function arenaThrowItem(target, itemType) {
@@ -1897,6 +2142,9 @@
     if (arenaTimerIv) { clearInterval(arenaTimerIv); arenaTimerIv = null; }
     if (arenaPhysicsRaf) { cancelAnimationFrame(arenaPhysicsRaf); arenaPhysicsRaf = null; }
     if (arenaPosInterval) { clearInterval(arenaPosInterval); arenaPosInterval = null; }
+    // 清理弹射物
+    arenaProjectiles.forEach(p => { if (p.el && p.el.parentNode) p.el.remove(); });
+    arenaProjectiles = [];
     const gameDuration = (Date.now() - arenaStartTime) / 1000;
     Object.keys(arenaPlayers).forEach(t => {
       const p = arenaPlayers[t];
@@ -1975,21 +2223,23 @@
     backToLobbyBtn.style.display = 'block';
   }
 
-  // Arena 道具栏快速选择
-  document.querySelectorAll('.arena-item-btn').forEach(btn => {
+  // Arena 弹药选择 + 发射
+  document.querySelectorAll('.ammo-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       if (!arenaGameActive) return;
-      if (arenaArmedItem === btn.dataset.item) {
-        arenaArmedItem = null;
-        btn.classList.remove('armed');
-      } else {
-        document.querySelectorAll('.arena-item-btn').forEach(b => b.classList.remove('armed'));
-        arenaArmedItem = btn.dataset.item;
-        btn.classList.add('armed');
-        showToast(`已选 ${btn.textContent}，点击目标投掷`);
-      }
+      document.querySelectorAll('.ammo-btn').forEach(b => b.classList.remove('ammo-active'));
+      btn.classList.add('ammo-active');
+      currentAmmo = btn.dataset.ammo;
     });
   });
+  const fireBtn = document.getElementById('fire-btn');
+  if (fireBtn) {
+    fireBtn.addEventListener('click', () => {
+      if (!arenaGameActive) return;
+      fireArenaProjectile(currentAmmo);
+    });
+    fireBtn.addEventListener('touchstart', (e) => { e.preventDefault(); if (arenaGameActive) fireArenaProjectile(currentAmmo); }, { passive: false });
+  }
 
   // Arena 退出
   arenaQuitBtn.addEventListener('click', () => {
