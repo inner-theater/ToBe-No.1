@@ -2046,22 +2046,9 @@
   }
 
   function handleArenaPlayerClick(playerInfo) {
-    // 点击头像不再自动发射，防止锁定太强
+    // 点击头像不做任何事，只能靠摇杆/键盘瞄准后发射
     if (!arenaGameActive) return;
-    showToast(`朝 ${escapeHTML(playerInfo.name)} 方向发射`);
-    const me = arenaPlayers[playerToken];
-    const target = arenaPlayers[playerInfo.player_token];
-    if (!me || !target || !me.alive || !target.alive) return;
-    const avatarSize = 52;
-    const dx = (target.x + avatarSize/2) - (me.x + avatarSize/2);
-    const dy = (target.y + avatarSize/2) - (me.y + avatarSize/2);
-    const len = Math.sqrt(dx*dx + dy*dy);
-    if (len < 1) return;
-    arenaMoveDir.x = dx / len;
-    arenaMoveDir.y = dy / len;
-    lastMoveDir.x = arenaMoveDir.x;
-    lastMoveDir.y = arenaMoveDir.y;
-    showToast(`已瞄准 ${escapeHTML(playerInfo.name)}，点击🔥发射`);
+    showToast(`靠摇杆瞄准，点击🔥发射`);
   }
 
   function arenaThrowItem(target, itemType) {
