@@ -62,6 +62,15 @@
           <div id="room-create-form" class="room-create-form" style="display:none">
             <input type="text" id="room-name-input" class="room-name-input" placeholder="房间名" maxlength="12">
             <input type="text" id="room-password-input" class="room-name-input" placeholder="密码 (可选)" maxlength="10">
+            <select id="room-mode-select" class="room-name-input">
+              <option value="speed">⚡ 手速对决</option>
+              <option value="arena">💥 大乱斗</option>
+            </select>
+            <select id="arena-duration-select" class="room-name-input" style="display:none">
+              <option value="180">⏱ 3 分钟</option>
+              <option value="600" selected>⏱ 10 分钟</option>
+              <option value="900">⏱ 15 分钟</option>
+            </select>
             <div class="room-form-btns">
               <button id="room-create-confirm" class="btn btn-primary btn-small">创建</button>
               <button id="room-create-cancel" class="btn btn-secondary btn-small">取消</button>
@@ -195,6 +204,36 @@
       <button class="btn btn-secondary btn-small" id="prop-intro-close" style="margin-top:12px;width:100%">知道了</button>
     </div>
   </div>
+
+  <!-- ====== 视图 5：大乱斗竞技场 ====== -->
+  <div id="arena-view" class="view">
+    <div class="arena-topbar">
+      <span class="arena-timer" id="arena-timer">--:--</span>
+      <span class="arena-alive" id="arena-alive-count"></span>
+      <button id="arena-quit-btn" class="btn btn-secondary btn-small">退出</button>
+    </div>
+    <div class="arena-stage" id="arena-stage"></div>
+    <!-- 方向圆盘 (移动端) -->
+    <div class="dpad-container" id="dpad-container">
+      <div class="dpad" id="dpad">
+        <button class="dpad-btn dpad-up" data-dir="0,-1">▲</button>
+        <button class="dpad-btn dpad-left" data-dir="-1,0">◀</button>
+        <div class="dpad-center">🎮</div>
+        <button class="dpad-btn dpad-right" data-dir="1,0">▶</button>
+        <button class="dpad-btn dpad-down" data-dir="0,1">▼</button>
+      </div>
+    </div>
+    <!-- 道具栏 -->
+    <div class="arena-items" id="arena-items">
+      <button class="arena-item-btn" data-item="tomato" title="番茄">🍅</button>
+      <button class="arena-item-btn" data-item="egg" title="鸡蛋">🥚</button>
+      <button class="arena-item-btn" data-item="bomb" title="炸弹">💣</button>
+      <button class="arena-item-btn" data-item="rocket" title="火箭">🚀</button>
+    </div>
+  </div>
+
+  <!-- 击杀提示 -->
+  <div id="kill-feed" class="kill-feed"></div>
 
   <script src="script.js"></script>
 </body>

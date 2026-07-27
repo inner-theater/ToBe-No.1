@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS rooms (
   creator_token TEXT NOT NULL,
   password     TEXT DEFAULT '',
   is_active    BOOLEAN DEFAULT true,
+  game_mode    TEXT DEFAULT 'speed',  -- 'speed' = 手速对决, 'arena' = 大乱斗
+  duration     INTEGER DEFAULT 600,   -- 大乱斗倒计时秒数 (180/600/900)
   created_at   TIMESTAMPTZ DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_rooms_active ON rooms(is_active);

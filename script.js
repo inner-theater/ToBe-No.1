@@ -36,6 +36,8 @@
   const roomCreateConfirm = $('#room-create-confirm');
   const roomCreateCancel  = $('#room-create-cancel');
   const roomPasswordInput = $('#room-password-input');
+  const roomModeSelect    = $('#room-mode-select');
+  const arenaDurationSelect = $('#arena-duration-select');
   const commentInput     = $('#comment-input');
   const commentSendBtn   = $('#comment-send-btn');
   const itemPopup        = $('#item-popup');
@@ -91,6 +93,29 @@
 
   const toastContainer = $('#toast-container');
 
+  // ========== Arena (大乱斗) ==========
+  const arenaView       = $('#arena-view');
+  const arenaStage      = $('#arena-stage');
+  const arenaTimerEl    = $('#arena-timer');
+  const arenaAliveCount = $('#arena-alive-count');
+  const arenaQuitBtn    = $('#arena-quit-btn');
+  const killFeed        = $('#kill-feed');
+  // Arena game state
+  let arenaPlayers  = {}; // { token: { el, x, y, vx, vy, hp, kills, assists, alive, eliminatedAt, nickname, avatar, targetX, targetY, lastHitBy, lastHitTime, hitHistory, survivalTime } }
+  let arenaGameActive = false;
+  let arenaCountdown  = 0;
+  let arenaTimerIv    = null;
+  let arenaPhysicsRaf = null;
+  let arenaThrottle   = 0; // fire rate limiter
+  let myArenaToken    = null;
+  let arenaKillLog    = []; // { killer, victim, time } for assist tracking
+  let roomTimerIv     = null; // 30-min room expiry timer
+  let arenaPosInterval = null; // 位置广播定时器
+  let arenaMoveDir    = { x: 0, y: 0 }; // 方向圆盘当前方向
+  let arenaDuration   = 600; // 倒计时秒数
+  let arenaStartTime  = 0; // 游戏开始时间戳
+  let arenaArmedItem  = null; // 已选中的道具（快速投掷）
+
   // ===================== Supabase =====================
   const supabase = window.supabase.createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.key);
 
@@ -101,6 +126,8 @@
   let roomId      = null;
   let currentRoom = null;  // 当前所在房间对象
   let isRoomOwner = false;
+  let propModeEnabled = false; // 道具赛是否开启（游戏开始时锁定）
+  let roomExpiryWarned = false; // 房间过期是否已提示
 
   // 游戏状态
   let clickCount   = 0;
@@ -149,12 +176,13 @@
   }
 
   function switchView(name) {
-    [profileView, lobbyView, waitingView, gameView, resultView].forEach(v => v.classList.remove('active'));
+    [profileView, lobbyView, waitingView, gameView, resultView, arenaView].forEach(v => v.classList.remove('active'));
     if (name === 'profile') profileView.classList.add('active');
     if (name === 'lobby')   lobbyView.classList.add('active');
     if (name === 'waiting') waitingView.classList.add('active');
     if (name === 'game')    gameView.classList.add('active');
     if (name === 'result')  resultView.classList.add('active');
+    if (name === 'arena')   arenaView.classList.add('active');
   }
 
   // ===================== 个人资料 =====================
@@ -363,7 +391,21 @@
 
   async function fetchLobbyRooms() {
     const { data } = await supabase.from('rooms').select('*').eq('is_active', true).order('created_at', { ascending: false });
-    lobbyRooms = data || [];
+    // 过滤超过30分钟的房间
+    const now = Date.now();
+    const valid = (data || []).filter(r => {
+      const age = (now - new Date(r.created_at).getTime()) / 1000;
+      return age < 30 * 60;
+    });
+    // 删除过期房间
+    const expired = (data || []).filter(r => {
+      const age = (now - new Date(r.created_at).getTime()) / 1000;
+      return age >= 30 * 60;
+    });
+    for (const r of expired) {
+      supabase.from('rooms').delete().eq('id', r.id).then(()=>{}).catch(()=>{});
+    }
+    lobbyRooms = valid;
     // 为每个房间附加人数，同时清理离线成员和空房间
     const clean = [];
     const cutoff = new Date(Date.now() - 60000).toISOString();
@@ -521,12 +563,14 @@
       roomList.innerHTML = '<p class="empty-hint" style="font-size:.75rem;padding:12px 0">暂无房间</p>';
       return;
     }
-    roomList.innerHTML = lobbyRooms.map(r => `
+    roomList.innerHTML = lobbyRooms.map(r => {
+      const modeIcon = r.game_mode === 'arena' ? '💥' : '⚡';
+      return `
       <div class="room-card" data-room-id="${r.id}">
-        <div class="room-name">${r.password ? '🔒 ' : ''}${escapeHTML(r.name)}</div>
+        <div class="room-name">${r.password ? '🔒 ' : ''}${modeIcon} ${escapeHTML(r.name)}</div>
         <div class="room-info">${r._memberCount || 0} 人</div>
-      </div>
-    `).join('');
+      </div>`;
+    }).join('');
 
     roomList.querySelectorAll('.room-card').forEach(card => {
       card.addEventListener('click', () => joinRoom(card.dataset.roomId));
@@ -548,13 +592,21 @@
     if (lobbyBottom) lobbyBottom.style.display = '';
   });
 
+  // 游戏模式切换 → 显示/隐藏时长选择
+  roomModeSelect.addEventListener('change', () => {
+    arenaDurationSelect.style.display = roomModeSelect.value === 'arena' ? 'block' : 'none';
+  });
+
   roomCreateConfirm.addEventListener('click', async () => {
     const name = roomNameInput.value.trim();
     if (!name) return showToast('输入房间名');
     const pwd = roomPasswordInput.value.trim();
+    const mode = roomModeSelect.value || 'speed';
+    const duration = mode === 'arena' ? parseInt(arenaDurationSelect.value) : 0;
     roomCreateConfirm.disabled = true;
     const { data, error } = await supabase.from('rooms').insert({
-      name, password: pwd, creator_token: playerToken, is_active: true
+      name, password: pwd, creator_token: playerToken, is_active: true,
+      game_mode: mode, duration: duration
     }).select().single();
     if (error) { showToast('创建失败'); roomCreateConfirm.disabled = false; return; }
 
@@ -650,16 +702,33 @@
     gameResults.clear();
     gameActive = false; gameFinished = false;
     clickCount = 0;
+    arenaGameActive = false;
+    // 清理 arena 资源
+    if (arenaTimerIv) { clearInterval(arenaTimerIv); arenaTimerIv = null; }
+    if (arenaPhysicsRaf) { cancelAnimationFrame(arenaPhysicsRaf); arenaPhysicsRaf = null; }
+    if (arenaPosInterval) { clearInterval(arenaPosInterval); arenaPosInterval = null; }
     // 持久化房间状态（刷新后能恢复）
     localStorage.setItem('active_room_id', room.id);
     localStorage.setItem('active_room_name', room.name);
     localStorage.setItem('active_room_owner', isRoomOwner ? '1' : '0');
     currentRoom = room;
     roomId = room.id;
+    roomExpiryWarned = false;
     switchView('waiting');
-    waitingRoomTitle.textContent = '⚔️ ' + room.name;
-    roomSubtitle.textContent = isRoomOwner ? '你是房主，等人齐就能开始！' : '等待房主开始...';
-    if (isRoomOwner) { ownerActions.style.display = 'block'; propModeLabel.style.display = 'block'; }
+    // 模式相关显示
+    const mode = room.game_mode || 'speed';
+    if (mode === 'arena') {
+      waitingRoomTitle.textContent = '💥 ' + room.name;
+      propModeLabel.style.display = 'none';
+      const dur = room.duration || 600;
+      const min = Math.floor(dur / 60);
+      roomSubtitle.textContent = `大乱斗 · ${min}分钟 · ${isRoomOwner ? '等人齐就能开始！' : '等待房主开始...'}`;
+    } else {
+      waitingRoomTitle.textContent = '⚡ ' + room.name;
+      roomSubtitle.textContent = isRoomOwner ? '你是房主，等人齐就能开始！' : '等待房主开始...';
+    }
+    if (isRoomOwner && mode === 'speed') { ownerActions.style.display = 'block'; propModeLabel.style.display = 'block'; }
+    else if (isRoomOwner && mode === 'arena') { ownerActions.style.display = 'block'; propModeLabel.style.display = 'none'; }
     else { ownerActions.style.display = 'none'; propModeLabel.style.display = 'none'; }
     replayBtn.style.display = 'none';
     // 重置开始按钮状态
@@ -670,6 +739,8 @@
     await fetchWaitingPlayers();
     setupGameRealtime();
     pollInterval = setInterval(fetchWaitingPlayers, 2000);
+    // 启动房间过期检测
+    startRoomExpiryTimer();
   }
 
   async function fetchWaitingPlayers() {
@@ -742,7 +813,9 @@
     }
     renderPlayerListUI();
     playerCountEl.textContent = allPlayers.length;
-    if (isRoomOwner) { ownerActions.style.display = 'block'; propModeLabel.style.display = 'block'; }
+    const _mode = currentRoom ? (currentRoom.game_mode || 'speed') : 'speed';
+    if (isRoomOwner && _mode === 'speed') { ownerActions.style.display = 'block'; propModeLabel.style.display = 'block'; }
+    else if (isRoomOwner && _mode === 'arena') { ownerActions.style.display = 'block'; propModeLabel.style.display = 'none'; }
     else { ownerActions.style.display = 'none'; propModeLabel.style.display = 'none'; }
   }
 
@@ -777,13 +850,25 @@
     gameResults.clear();
     // 清除 DB 中上轮结果
     supabase.from('room_members').update({ result_json: null }).eq('room_id', roomId).then(()=>{}).catch(()=>{});
-    // 广播游戏开始 + 玩家名单
-    gameChannel.send({
-      type: 'broadcast', event: 'game_start',
-      payload: { players: allPlayers.map(p => ({ name: p.name, player_token: p.player_token })) }
-    });
-    gameActive = true;
-    enterGamePhase();
+
+    const mode = currentRoom ? (currentRoom.game_mode || 'speed') : 'speed';
+    if (mode === 'arena') {
+      const duration = currentRoom.duration || 600;
+      gameChannel.send({
+        type: 'broadcast', event: 'arena_start',
+        payload: { players: allPlayers.map(p => ({ name: p.name, player_token: p.player_token })), duration }
+      });
+      enterArenaPhase(allPlayers, duration);
+    } else {
+      propModeEnabled = propModeCheck.checked;
+      // 广播游戏开始 + 玩家名单 + 道具赛开关
+      gameChannel.send({
+        type: 'broadcast', event: 'game_start',
+        payload: { players: allPlayers.map(p => ({ name: p.name, player_token: p.player_token })), prop_mode: propModeEnabled }
+      });
+      gameActive = true;
+      enterGamePhase();
+    }
   });
 
   function enterGamePhase() {
@@ -877,8 +962,14 @@
   })();
 
   async function calculateAndRevealBuff() {
-    const b = BUFFS[BUFF_ROULETTE[Math.floor(Math.random() * BUFF_ROULETTE.length)]];
-    const finalScore = b.fn(clickCount, allPlayers, { player_token: playerToken });
+    let b, finalScore;
+    if (propModeEnabled) {
+      b = BUFFS[BUFF_ROULETTE[Math.floor(Math.random() * BUFF_ROULETTE.length)]];
+      finalScore = b.fn(clickCount, allPlayers, { player_token: playerToken });
+    } else {
+      b = { name: '无道具', desc: '本局未开启道具赛', icon: '—' };
+      finalScore = clickCount;
+    }
     buffIconEl.textContent = b.icon;
     buffNameEl.textContent = b.name;
     buffDescEl.textContent = b.desc;
@@ -889,7 +980,7 @@
     // 写入 room_members.result_json（可靠 UPDATE，不依赖 players 表）
     const myResult = {
       player_token: playerToken, name: myProfile.nickname,
-      click_count: clickCount, buff: b.name, final_score: finalScore
+      click_count: clickCount, buff: propModeEnabled ? b.name : '', final_score: finalScore
     };
     gameResults.set(playerToken, myResult);
     await supabase.from('room_members')
@@ -901,7 +992,7 @@
     try {
       await supabase.from('players').upsert({
         room_id: String(roomId), name: myProfile.nickname, player_token: playerToken,
-        click_count: clickCount, buff: b.name, final_score: finalScore,
+        click_count: clickCount, buff: propModeEnabled ? b.name : '', final_score: finalScore,
         is_finished: true, is_owner: isRoomOwner, game_started: true
       });
     } catch(e) {}
@@ -951,6 +1042,13 @@
   }
 
   async function showResults(players) {
+    // 恢复手速模式标题
+    const titleEl = document.querySelector('.result-title');
+    const announceEl = document.querySelector('#loser-announce');
+    const subEl = document.querySelector('.loser-sub');
+    if (titleEl) { titleEl.textContent = '排行已定！'; titleEl.className = 'result-title neon-text-red'; }
+    if (announceEl) announceEl.style.display = '';
+    if (subEl) subEl.style.display = '';
     const sorted = (players||[]).sort((a,b)=>b.final_score-a.final_score);
     // 精准打击：不是点击之王则抢最高点击者 5 分（自己 +5，对方 -5）
     const maxClicks = Math.max(...sorted.map(p => p.click_count || 0), 0);
@@ -1034,6 +1132,13 @@
   }
 
   async function exitRoomToLobby() {
+    // 清理 arena 状态
+    arenaGameActive = false;
+    if (arenaKeyboardHandler) {
+      window.removeEventListener('keydown', arenaKeyboardHandler.down);
+      window.removeEventListener('keyup', arenaKeyboardHandler.up);
+      arenaKeyboardHandler = null;
+    }
     const wasOwner = isRoomOwner;
     await supabase.from('room_members').delete().eq('user_token', playerToken).eq('room_id', roomId);
     if (wasOwner) await promoteNextOwner();
@@ -1054,6 +1159,8 @@
     gameResults.clear();
     gameActive = false; gameFinished = false;
     clickCount = 0;
+    arenaGameActive = false;
+    if (arenaKeyboardHandler) { window.removeEventListener('keydown', arenaKeyboardHandler.down); window.removeEventListener('keyup', arenaKeyboardHandler.up); arenaKeyboardHandler = null; }
     // 广播通知所有人重置
     gameChannel.send({ type: 'broadcast', event: 'game_reset', payload: {} });
     enterWaitingRoom(currentRoom);
@@ -1063,6 +1170,8 @@
     gameResults.clear();
     gameActive = false; gameFinished = false;
     clickCount = 0;
+    arenaGameActive = false;
+    if (arenaKeyboardHandler) { window.removeEventListener('keydown', arenaKeyboardHandler.down); window.removeEventListener('keyup', arenaKeyboardHandler.up); arenaKeyboardHandler = null; }
     gameChannel.send({ type: 'broadcast', event: 'game_reset', payload: {} });
     enterWaitingRoom(currentRoom);
   });
@@ -1092,23 +1201,36 @@
       }
       historyList.innerHTML = records.map((r, idx) => {
         const players = JSON.parse(r.players_json || '[]');
-        const sorted = players.sort((a,b) => b.score - a.score);
+        const isArena = players.some(p => p.game_mode === 'arena' || p.kills !== undefined);
+        const sorted = players.sort((a,b) => {
+          if (isArena) return (b.survival_time||0) - (a.survival_time||0) || (b.hp||0) - (a.hp||0);
+          return b.score - a.score;
+        });
         const dt = new Date(r.played_at);
         const dateStr = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')} ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`;
         // 生成排名详情 HTML
         const detailHTML = sorted.map((p,i) => {
           const badge = i===0 ? '🥇' : (i===1 ? '🥈' : (i===2 ? '🥉' : `${i+1}`));
           const isMe = (p.name === myNick || p.nickname === myNick);
+          let stats;
+          if (isArena) {
+            const survMin = Math.floor((p.survival_time||0) / 60);
+            const survSec = Math.floor((p.survival_time||0) % 60);
+            stats = `击杀${p.kills||0} · 助攻${p.assists||0} · HP${p.hp||0} · 存活${survMin}:${String(survSec).padStart(2,'0')}`;
+          } else {
+            stats = `${escapeHTML(p.buff||'')} · ${p.clicks}次点击 · ${p.score}分`;
+          }
           return `<div class="h-detail-row${isMe ? ' h-highlight' : ''}">
             <span class="h-detail-rank">${badge}</span>
             <span class="h-detail-name">${escapeHTML(p.name||p.nickname)}${isMe?' (我)':''}</span>
-            <span class="h-detail-stats">${escapeHTML(p.buff||'')} · ${p.clicks}次点击 · ${p.score}分</span>
+            <span class="h-detail-stats">${stats}</span>
           </div>`;
         }).join('');
+        const modeIcon = isArena ? '💥' : '⚡';
         return `<div class="history-card" onclick="this.classList.toggle('expanded')">
           <div class="h-header">
             <span class="h-date">${dateStr}</span>
-            <span class="h-room">${escapeHTML(r.room_name)}</span>
+            <span class="h-room">${modeIcon} ${escapeHTML(r.room_name)}</span>
             <span class="h-count">${sorted.length}人</span>
           </div>
           <div class="h-detail">${detailHTML}</div>
@@ -1134,7 +1256,11 @@
     btn.addEventListener('click', () => {
       const item = btn.dataset.item;
       itemPopup.style.display = 'none';
-      throwItem(selectedTarget, item);
+      if (arenaGameActive) {
+        arenaThrowItem(selectedTarget, item);
+      } else {
+        throwItem(selectedTarget, item);
+      }
       selectedTarget = null;
     });
   });
@@ -1293,6 +1419,7 @@
           if (payload.payload && payload.payload.players) {
             allPlayers = payload.payload.players;
           }
+          propModeEnabled = (payload.payload && payload.payload.prop_mode) || false;
           gameResults.clear();
           gameActive = true;
           stopAllIntervals();
@@ -1315,11 +1442,79 @@
         gameActive = false;
         gameFinished = false;
         clickCount = 0;
+        arenaGameActive = false;
+        if (arenaKeyboardHandler) {
+          window.removeEventListener('keydown', arenaKeyboardHandler.down);
+          window.removeEventListener('keyup', arenaKeyboardHandler.up);
+          arenaKeyboardHandler = null;
+        }
         stopAllIntervals();
         enterWaitingRoom(currentRoom);
       })
       .on('broadcast', { event: 'prop_intro' }, () => {
         showPropIntro();
+      })
+      // ===== 大乱斗事件 =====
+      .on('broadcast', { event: 'arena_start' }, payload => {
+        if (!arenaGameActive) {
+          if (payload.payload && payload.payload.players) {
+            allPlayers = payload.payload.players;
+          }
+          enterArenaPhase(allPlayers, payload.payload.duration || 600);
+        }
+      })
+      .on('broadcast', { event: 'arena_pos' }, payload => {
+        const p = payload.payload;
+        if (p.token !== playerToken && arenaPlayers[p.token]) {
+          arenaPlayers[p.token].targetX = p.x;
+          arenaPlayers[p.token].targetY = p.y;
+        }
+      })
+      .on('broadcast', { event: 'arena_throw' }, payload => {
+        if (payload.payload.from !== playerToken) {
+          animateArenaItemFly(payload.payload.from, payload.payload.to, payload.payload.item);
+        }
+      })
+      .on('broadcast', { event: 'arena_hit' }, payload => {
+        // 只有被击中者处理伤害
+        if (payload.payload.to !== playerToken) return;
+        if (!arenaGameActive) return;
+        const me = arenaPlayers[playerToken];
+        if (!me || !me.alive) return;
+        me.hp = Math.max(0, me.hp - 1);
+        me.lastHitBy = payload.payload.from;
+        me.lastHitTime = Date.now();
+        me.hitHistory.push({ attacker: payload.payload.from, time: Date.now() });
+        updateArenaHpDisplay(playerToken);
+        // 广播 HP 更新
+        gameChannel.send({ type: 'broadcast', event: 'arena_hp_update', payload: { token: playerToken, hp: me.hp } });
+        if (me.hp <= 0) {
+          const assistCutoff = Date.now() - 10000;
+          const assistants = [...new Set(
+            me.hitHistory.filter(h => h.time > assistCutoff && h.attacker !== payload.payload.from && h.attacker !== playerToken)
+              .map(h => h.attacker)
+          )];
+          gameChannel.send({
+            type: 'broadcast', event: 'arena_eliminated',
+            payload: { token: playerToken, killed_by: payload.payload.from, assistants, time: Date.now() }
+          });
+          arenaEliminatePlayer(playerToken, payload.payload.from, assistants);
+        }
+      })
+      .on('broadcast', { event: 'arena_hp_update' }, payload => {
+        if (payload.payload.token === playerToken) return;
+        const p = arenaPlayers[payload.payload.token];
+        if (p) { p.hp = payload.payload.hp; updateArenaHpDisplay(payload.payload.token); }
+      })
+      .on('broadcast', { event: 'arena_eliminated' }, payload => {
+        const d = payload.payload;
+        if (arenaPlayers[d.token]) {
+          arenaEliminatePlayer(d.token, d.killed_by, d.assistants || []);
+        }
+      })
+      .on('broadcast', { event: 'room_expired' }, () => {
+        showToast('房间已到期，自动解散');
+        exitRoomToLobby();
       })
       .subscribe();
   }
@@ -1327,7 +1522,507 @@
   function stopAllIntervals() {
     if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
     if (lobbyUsersInterval) { clearInterval(lobbyUsersInterval); lobbyUsersInterval = null; }
+    if (arenaTimerIv) { clearInterval(arenaTimerIv); arenaTimerIv = null; }
+    if (arenaPosInterval) { clearInterval(arenaPosInterval); arenaPosInterval = null; }
+    if (arenaPhysicsRaf) { cancelAnimationFrame(arenaPhysicsRaf); arenaPhysicsRaf = null; }
+    if (roomTimerIv) { clearInterval(roomTimerIv); roomTimerIv = null; }
     stopPhysics();
+  }
+
+  // ===================== 大乱斗 (Arena) =====================
+  function enterArenaPhase(players, duration) {
+    stopAllIntervals();
+    gameResults.clear();
+    switchView('arena');
+    arenaStage.innerHTML = '';
+    arenaPlayers = {};
+    arenaGameActive = true;
+    arenaDuration = duration || 600;
+    arenaStartTime = Date.now();
+    arenaMoveDir = { x: 0, y: 0 };
+    arenaArmedItem = null;
+
+    // 获取当前用户头像
+    const myAvatar = (myProfile && myProfile.avatar_b64) ? myProfile.avatar_b64 : '';
+
+    const stageW = arenaStage.clientWidth || 400;
+    const stageH = arenaStage.clientHeight || 400;
+    const avatarSize = 52;
+
+    players.forEach((p, i) => {
+      const angle = (i / players.length) * Math.PI * 2;
+      const radius = Math.min(stageW, stageH) * 0.28;
+      const cx = stageW / 2 - avatarSize / 2;
+      const cy = stageH / 2 - avatarSize / 2;
+      const x = cx + Math.cos(angle) * radius;
+      const y = cy + Math.sin(angle) * radius;
+
+      // 获取头像：优先从在线用户中查找
+      const onlineUser = onlineUsers.find(u => u.player_token === p.player_token);
+      const avatar = onlineUser ? onlineUser.avatar_b64 : (p.player_token === playerToken ? myAvatar : '');
+
+      const div = document.createElement('div');
+      div.className = 'arena-avatar';
+      div.dataset.token = p.player_token;
+      div.innerHTML = `
+        <div class="arena-hp-bar"><div class="arena-hp-fill" style="width:100%"></div></div>
+        <div class="arena-avatar-circle">${avatar ? `<img src="${avatar}">` : ''}</div>
+        <span class="arena-avatar-nick">${escapeHTML(p.name)}</span>
+        <span class="arena-hp-text">15</span>
+      `;
+      if (p.player_token === playerToken) {
+        div.classList.add('arena-self');
+      } else {
+        div.addEventListener('click', () => handleArenaPlayerClick(p));
+      }
+      arenaStage.appendChild(div);
+
+      arenaPlayers[p.player_token] = {
+        el: div, x, y, vx: 0, vy: 0,
+        hp: 15, kills: 0, assists: 0,
+        alive: true, eliminatedAt: null,
+        nickname: p.name, avatar: avatar,
+        targetX: x, targetY: y,
+        lastHitBy: null, lastHitTime: 0,
+        hitHistory: [], survivalTime: 0
+      };
+    });
+
+    startArenaPhysics();
+    startArenaTimer();
+    setupArenaJoystick();
+    setupArenaKeyboard();
+    arenaPosInterval = setInterval(broadcastArenaPosition, 100);
+    updateArenaAliveCount();
+  }
+
+  function startArenaPhysics() {
+    if (arenaPhysicsRaf) cancelAnimationFrame(arenaPhysicsRaf);
+    let lastTime = 0;
+    function tick(now) {
+      if (!arenaGameActive) return;
+      const dt = Math.min((now - lastTime) / 16, 3);
+      lastTime = now;
+      const stageW = arenaStage.clientWidth || 400;
+      const stageH = arenaStage.clientHeight || 400;
+      const avatarSize = 52;
+      const moveSpeed = 2.8;
+
+      // 本地玩家：方向圆盘控制速度
+      const me = arenaPlayers[playerToken];
+      if (me && me.alive) {
+        me.vx = arenaMoveDir.x * moveSpeed;
+        me.vy = arenaMoveDir.y * moveSpeed;
+      }
+
+      const tokens = Object.keys(arenaPlayers);
+      for (const t of tokens) {
+        const p = arenaPlayers[t];
+        if (!p.alive) continue;
+        if (t === playerToken) {
+          p.x += p.vx * dt;
+          p.y += p.vy * dt;
+        } else {
+          // 远程玩家：插值靠近目标位置
+          const lerp = 0.18;
+          p.x += (p.targetX - p.x) * lerp * dt;
+          p.y += (p.targetY - p.y) * lerp * dt;
+        }
+        if (p.x < 0) p.x = 0;
+        if (p.x > stageW - avatarSize) p.x = stageW - avatarSize;
+        if (p.y < 0) p.y = 0;
+        if (p.y > stageH - avatarSize - 16) p.y = stageH - avatarSize - 16;
+      }
+
+      // 碰撞检测
+      for (let i = 0; i < tokens.length; i++) {
+        for (let j = i + 1; j < tokens.length; j++) {
+          const a = arenaPlayers[tokens[i]], b = arenaPlayers[tokens[j]];
+          if (!a.alive || !b.alive) continue;
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const dist = Math.sqrt(dx*dx + dy*dy);
+          const minDist = 50;
+          if (dist < minDist && dist > 0) {
+            const nx = dx / dist, ny = dy / dist;
+            const overlap = minDist - dist;
+            a.x -= nx * overlap * 0.5;
+            a.y -= ny * overlap * 0.5;
+            b.x += nx * overlap * 0.5;
+            b.y += ny * overlap * 0.5;
+          }
+        }
+      }
+
+      for (const t of tokens) {
+        const p = arenaPlayers[t];
+        p.el.style.left = p.x + 'px';
+        p.el.style.top = p.y + 'px';
+      }
+      arenaPhysicsRaf = requestAnimationFrame(tick);
+    }
+    arenaPhysicsRaf = requestAnimationFrame(tick);
+  }
+
+  function startArenaTimer() {
+    let remaining = arenaDuration;
+    updateArenaTimerDisplay(remaining);
+    arenaTimerIv = setInterval(() => {
+      if (!arenaGameActive) return;
+      remaining--;
+      updateArenaTimerDisplay(remaining);
+      if (remaining <= 0) {
+        clearInterval(arenaTimerIv);
+        endArenaGame();
+      }
+    }, 1000);
+  }
+
+  function updateArenaTimerDisplay(seconds) {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    arenaTimerEl.textContent = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    arenaTimerEl.style.color = seconds <= 30 ? '#ef4444' : '';
+  }
+
+  function updateArenaAliveCount() {
+    const alive = Object.values(arenaPlayers).filter(p => p.alive).length;
+    const total = Object.keys(arenaPlayers).length;
+    arenaAliveCount.textContent = `存活 ${alive}/${total}`;
+  }
+
+  function setupArenaJoystick() {
+    const dpadBtns = document.querySelectorAll('.dpad-btn');
+    const activeDirs = new Set();
+    dpadBtns.forEach(btn => {
+      const dir = btn.dataset.dir.split(',').map(Number);
+      const dirKey = dir.join(',');
+      const press = (e) => { e.preventDefault(); activeDirs.add(dirKey); updateJoystickDir(activeDirs); };
+      const release = (e) => { e.preventDefault(); activeDirs.delete(dirKey); updateJoystickDir(activeDirs); };
+      btn.addEventListener('touchstart', press, { passive: false });
+      btn.addEventListener('touchend', release, { passive: false });
+      btn.addEventListener('touchcancel', release, { passive: false });
+      btn.addEventListener('mousedown', press);
+      btn.addEventListener('mouseup', release);
+      btn.addEventListener('mouseleave', release);
+    });
+  }
+
+  function updateJoystickDir(activeDirs) {
+    let x = 0, y = 0;
+    activeDirs.forEach(d => {
+      const [dx, dy] = d.split(',').map(Number);
+      x += dx; y += dy;
+    });
+    if (x !== 0 && y !== 0) { x *= 0.707; y *= 0.707; }
+    arenaMoveDir.x = x;
+    arenaMoveDir.y = y;
+  }
+
+  let arenaKeyboardHandler = null;
+  function setupArenaKeyboard() {
+    if (arenaKeyboardHandler) return;
+    const keys = {};
+    function onKey(e, down) {
+      if (!arenaGameActive) return;
+      const k = e.key.toLowerCase();
+      if (['arrowleft','arrowright','arrowup','arrowdown','w','a','s','d'].includes(k)) {
+        e.preventDefault();
+        keys[k] = down;
+        let x = 0, y = 0;
+        if (keys['arrowleft'] || keys['a']) x -= 1;
+        if (keys['arrowright'] || keys['d']) x += 1;
+        if (keys['arrowup'] || keys['w']) y -= 1;
+        if (keys['arrowdown'] || keys['s']) y += 1;
+        if (x !== 0 && y !== 0) { x *= 0.707; y *= 0.707; }
+        arenaMoveDir.x = x;
+        arenaMoveDir.y = y;
+      }
+    }
+    arenaKeyboardHandler = { down: e => onKey(e, true), up: e => onKey(e, false) };
+    window.addEventListener('keydown', arenaKeyboardHandler.down);
+    window.addEventListener('keyup', arenaKeyboardHandler.up);
+  }
+
+  function broadcastArenaPosition() {
+    if (!arenaGameActive || !gameChannel) return;
+    const me = arenaPlayers[playerToken];
+    if (!me) return;
+    gameChannel.send({
+      type: 'broadcast', event: 'arena_pos',
+      payload: { token: playerToken, x: Math.round(me.x), y: Math.round(me.y), hp: me.hp, alive: me.alive }
+    });
+  }
+
+  function handleArenaPlayerClick(playerInfo) {
+    if (!arenaGameActive) return;
+    const me = arenaPlayers[playerToken];
+    if (!me || !me.alive) return;
+    const target = arenaPlayers[playerInfo.player_token];
+    if (!target || !target.alive) return;
+    if (arenaArmedItem) {
+      // 快速投掷
+      arenaThrowItem(playerInfo, arenaArmedItem);
+      arenaArmedItem = null;
+      document.querySelectorAll('.arena-item-btn').forEach(b => b.classList.remove('armed'));
+    } else {
+      // 弹出道具选择
+      selectedTarget = playerInfo;
+      itemTargetName.textContent = playerInfo.name;
+      itemPopup.style.display = 'flex';
+    }
+  }
+
+  function arenaThrowItem(target, itemType) {
+    if (!arenaGameActive) return;
+    const now = Date.now();
+    if (now - lastItemTime < 800) { showToast('冷却中...'); return; }
+    lastItemTime = now;
+    const targetP = arenaPlayers[target.player_token];
+    if (!targetP || !targetP.alive) return;
+    // 广播投掷动画
+    gameChannel.send({
+      type: 'broadcast', event: 'arena_throw',
+      payload: { from: playerToken, to: target.player_token, item: itemType }
+    });
+    // 本地播放动画，动画结束后广播命中
+    animateArenaItemFly(playerToken, target.player_token, itemType, () => {
+      if (!arenaGameActive || !targetP.alive) return;
+      gameChannel.send({
+        type: 'broadcast', event: 'arena_hit',
+        payload: { from: playerToken, to: target.player_token, item: itemType }
+      });
+    });
+  }
+
+  function animateArenaItemFly(fromToken, toToken, itemType, onHit) {
+    const fromP = arenaPlayers[fromToken];
+    const toP = arenaPlayers[toToken];
+    if (!fromP || !toP) { if (onHit) onHit(); return; }
+    const eff = ITEM_EFFECTS[itemType] || ITEM_EFFECTS.tomato;
+    const stageRect = arenaStage.getBoundingClientRect();
+    const fly = document.createElement('span');
+    fly.className = 'item-fly';
+    fly.textContent = eff.emoji;
+    fly.style.position = 'fixed';
+    fly.style.fontSize = '1.6rem';
+    fly.style.pointerEvents = 'none';
+    fly.style.zIndex = '1000';
+    document.body.appendChild(fly);
+    const startTime = performance.now();
+    const duration = 500;
+    const arcHeight = 50;
+    function frame(now) {
+      const elapsed = now - startTime;
+      const t = Math.min(elapsed / duration, 1);
+      const ease = 1 - Math.pow(1 - t, 3);
+      const sx = stageRect.left + fromP.x + 24;
+      const sy = stageRect.top + fromP.y + 24;
+      const tx = stageRect.left + toP.x + 24;
+      const ty = stageRect.top + toP.y + 24;
+      const cx = sx + (tx - sx) * ease;
+      const cy = sy + (ty - sy) * ease - Math.sin(t * Math.PI) * arcHeight;
+      fly.style.left = cx + 'px';
+      fly.style.top = cy + 'px';
+      fly.style.transform = `translate(-50%,-50%) scale(${1 + Math.sin(t*Math.PI)*0.4}) rotate(${t*360}deg)`;
+      if (t < 1) {
+        requestAnimationFrame(frame);
+      } else {
+        fly.remove();
+        const hit = document.createElement('span');
+        hit.className = 'hit-effect';
+        hit.textContent = eff.emoji;
+        hit.style.left = tx + 'px';
+        hit.style.top = ty + 'px';
+        document.body.appendChild(hit);
+        setTimeout(() => hit.remove(), 600);
+        if (eff.cls) { toP.el.classList.add(eff.cls); setTimeout(() => toP.el.classList.remove(eff.cls), 1000); }
+        toP.el.classList.add('avatar-impact');
+        setTimeout(() => toP.el.classList.remove('avatar-impact'), 500);
+        if (onHit) onHit();
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+
+  function updateArenaHpDisplay(token) {
+    const p = arenaPlayers[token];
+    if (!p) return;
+    const fill = p.el.querySelector('.arena-hp-fill');
+    const text = p.el.querySelector('.arena-hp-text');
+    if (fill) {
+      fill.style.width = (p.hp / 15 * 100) + '%';
+      fill.style.background = p.hp > 10 ? '#22c55e' : (p.hp > 5 ? '#fbbf24' : '#ef4444');
+    }
+    if (text) text.textContent = p.hp;
+  }
+
+  function arenaEliminatePlayer(token, killedBy, assistants) {
+    const p = arenaPlayers[token];
+    if (!p || !p.alive) return;
+    p.alive = false;
+    p.eliminatedAt = Date.now();
+    p.el.classList.add('arena-eliminated');
+    if (killedBy && arenaPlayers[killedBy]) arenaPlayers[killedBy].kills++;
+    (assistants || []).forEach(a => {
+      if (arenaPlayers[a] && a !== killedBy && a !== token) arenaPlayers[a].assists++;
+    });
+    const killerName = killedBy && arenaPlayers[killedBy] ? arenaPlayers[killedBy].nickname : '系统';
+    const assistNames = (assistants || []).map(a => arenaPlayers[a] ? arenaPlayers[a].nickname : '?').join(', ');
+    showKillFeed(killerName, p.nickname, assistNames);
+    updateArenaAliveCount();
+    if (token === playerToken) {
+      showToast('你被淘汰了！');
+      arenaMoveDir = { x: 0, y: 0 };
+    }
+    const aliveCount = Object.values(arenaPlayers).filter(p => p.alive).length;
+    if (aliveCount <= 1) {
+      setTimeout(endArenaGame, 1500);
+    }
+  }
+
+  function showKillFeed(killer, victim, assists) {
+    const div = document.createElement('div');
+    div.className = 'kill-feed-item';
+    let html = `<span class="kf-killer">${escapeHTML(killer)}</span> 击败 <span class="kf-victim">${escapeHTML(victim)}</span>`;
+    if (assists) html += ` <span class="kf-assist">助攻 ${escapeHTML(assists)}</span>`;
+    div.innerHTML = html;
+    killFeed.appendChild(div);
+    setTimeout(() => div.remove(), 5000);
+    while (killFeed.children.length > 5) killFeed.firstChild.remove();
+  }
+
+  function endArenaGame() {
+    if (!arenaGameActive) return;
+    arenaGameActive = false;
+    if (arenaTimerIv) { clearInterval(arenaTimerIv); arenaTimerIv = null; }
+    if (arenaPhysicsRaf) { cancelAnimationFrame(arenaPhysicsRaf); arenaPhysicsRaf = null; }
+    if (arenaPosInterval) { clearInterval(arenaPosInterval); arenaPosInterval = null; }
+    const gameDuration = (Date.now() - arenaStartTime) / 1000;
+    Object.keys(arenaPlayers).forEach(t => {
+      const p = arenaPlayers[t];
+      if (p.alive) p.survivalTime = gameDuration;
+      else if (p.eliminatedAt) p.survivalTime = (p.eliminatedAt - arenaStartTime) / 1000;
+      else p.survivalTime = 0;
+    });
+    const arr = Object.entries(arenaPlayers).map(([token, p]) => ({
+      token, nickname: p.nickname, avatar: p.avatar,
+      hp: p.hp, kills: p.kills, assists: p.assists,
+      alive: p.alive, survivalTime: p.survivalTime
+    }));
+    const survivors = arr.filter(p => p.alive);
+    const eliminated = arr.filter(p => !p.alive);
+    let ranking;
+    if (survivors.length <= 1) {
+      ranking = arr.sort((a, b) => b.survivalTime - a.survivalTime);
+    } else {
+      survivors.sort((a, b) => b.hp - a.hp);
+      eliminated.sort((a, b) => b.survivalTime - a.survivalTime);
+      ranking = [...survivors, ...eliminated];
+    }
+    showArenaResults(ranking);
+  }
+
+  function showArenaResults(ranking) {
+    const titleEl = document.querySelector('.result-title');
+    const announceEl = document.querySelector('#loser-announce');
+    const subEl = document.querySelector('.loser-sub');
+    if (titleEl) { titleEl.textContent = '大乱斗结束！'; titleEl.className = 'result-title neon-text'; }
+    if (announceEl) announceEl.style.display = 'none';
+    if (subEl) subEl.style.display = 'none';
+    const tokenMap = {};
+    onlineUsers.forEach(u => { tokenMap[u.player_token] = u.avatar_b64; });
+    rankingList.innerHTML = ranking.map((p, i) => {
+      const cls = i===ranking.length-1&&ranking.length>1?'rank-item last-place':'rank-item';
+      const badge = i<3 ? ['🥇','🥈','🥉'][i] : `${i+1}`;
+      const avatar = p.avatar || tokenMap[p.token] || '';
+      const avatarImg = avatar ? `<img src="${avatar}" class="rank-avatar">` : '<span class="rank-avatar-empty">👤</span>';
+      const status = p.alive ? `HP ${p.hp}` : '已淘汰';
+      const survMin = Math.floor(p.survivalTime / 60);
+      const survSec = Math.floor(p.survivalTime % 60);
+      return `<div class="${cls}">
+        <span class="rank-badge">${badge}</span>
+        <div class="rank-avatar-wrap">${avatarImg}</div>
+        <div class="rank-info">
+          <div class="rank-name">${escapeHTML(p.nickname)}</div>
+          <div class="rank-buff">击杀 ${p.kills} · 助攻 ${p.assists} · ${status} · 存活 ${survMin}:${String(survSec).padStart(2,'0')}</div>
+        </div>
+      </div>`;
+    }).join('');
+    if (ranking.length > 0) {
+      loserNameEl.textContent = ranking[0].nickname;
+      (async () => {
+        try {
+          await supabase.from('game_history').insert({
+            room_name: currentRoom ? currentRoom.name : '',
+            room_id: currentRoom ? currentRoom.id : '',
+            players_json: JSON.stringify(ranking.map(p => ({
+              name: p.nickname, nickname: p.nickname,
+              kills: p.kills, assists: p.assists, hp: p.hp,
+              alive: p.alive, survival_time: p.survivalTime,
+              score: p.hp, avatar: p.avatar,
+              game_mode: 'arena'
+            }))),
+            loser: ranking[ranking.length-1].token,
+            loser_nickname: ranking[ranking.length-1].nickname,
+            played_at: new Date().toISOString()
+          });
+        } catch(e) { console.warn('arena history save failed', e); }
+      })();
+    }
+    switchView('result');
+    if (isRoomOwner) { ownerReset.style.display = 'block'; replayBtn.style.display = 'block'; }
+    else { ownerReset.style.display = 'none'; replayBtn.style.display = 'none'; }
+    backToLobbyBtn.style.display = 'block';
+  }
+
+  // Arena 道具栏快速选择
+  document.querySelectorAll('.arena-item-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (!arenaGameActive) return;
+      if (arenaArmedItem === btn.dataset.item) {
+        arenaArmedItem = null;
+        btn.classList.remove('armed');
+      } else {
+        document.querySelectorAll('.arena-item-btn').forEach(b => b.classList.remove('armed'));
+        arenaArmedItem = btn.dataset.item;
+        btn.classList.add('armed');
+        showToast(`已选 ${btn.textContent}，点击目标投掷`);
+      }
+    });
+  });
+
+  // Arena 退出
+  arenaQuitBtn.addEventListener('click', () => {
+    if (!arenaGameActive) { exitRoomToLobby(); return; }
+    const me = arenaPlayers[playerToken];
+    if (me && me.alive) {
+      gameChannel.send({
+        type: 'broadcast', event: 'arena_eliminated',
+        payload: { token: playerToken, killed_by: null, assistants: [], time: Date.now() }
+      });
+      arenaEliminatePlayer(playerToken, null, []);
+    }
+    setTimeout(() => exitRoomToLobby(), 300);
+  });
+
+  // ===================== 房间过期检测 =====================
+  function startRoomExpiryTimer() {
+    if (roomTimerIv) clearInterval(roomTimerIv);
+    roomTimerIv = setInterval(async () => {
+      if (!currentRoom || !currentRoom.created_at) return;
+      const createdAt = new Date(currentRoom.created_at).getTime();
+      const elapsed = (Date.now() - createdAt) / 1000;
+      const remaining = 30 * 60 - elapsed;
+      if (remaining <= 0) {
+        clearInterval(roomTimerIv);
+        if (gameChannel) gameChannel.send({ type: 'broadcast', event: 'room_expired', payload: {} });
+        showToast('房间已达30分钟上限，即将解散');
+        exitRoomToLobby();
+      } else if (remaining <= 300 && !roomExpiryWarned) {
+        roomExpiryWarned = true;
+        showToast('房间将在5分钟后解散，请尽快完成游戏');
+      }
+    }, 5000);
   }
 
   // ===================== 全局 Realtime 事件 =====================

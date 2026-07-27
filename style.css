@@ -289,6 +289,71 @@ body::before{
 .rank-item.last-place .rank-score{color:var(--red-glow)}
 .owner-reset{text-align:center;margin-top:20px;padding-bottom:20px}
 
+/* ====== 5. 大乱斗 Arena ====== */
+#arena-view { padding: 0; height: 100vh; height: 100dvh; display: flex; flex-direction: column; background: var(--bg-deep); }
+.arena-topbar { display: flex; align-items: center; justify-content: space-between; padding: 8px 16px; background: var(--bg-card); border-bottom: 1px solid var(--border-color); flex-shrink: 0; z-index: 30; }
+.arena-timer { font-size: 1.5rem; font-weight: 900; font-family: var(--font-mono); color: var(--neon-cyan); text-shadow: 0 0 10px rgba(6,182,212,.5); min-width: 72px; }
+.arena-alive { font-size: .85rem; color: var(--text-secondary); font-weight: 600; }
+.arena-stage { flex: 1; position: relative; overflow: hidden; background: radial-gradient(ellipse at center, rgba(168,85,247,.04) 0%, transparent 70%); }
+
+.arena-avatar { position: absolute; display: flex; flex-direction: column; align-items: center; gap: 2px; z-index: 10; transition: filter .4s ease, opacity .4s ease; }
+.arena-avatar.arena-self { z-index: 15; }
+.arena-avatar.arena-self .arena-avatar-circle { border-color: var(--neon-cyan); box-shadow: 0 0 12px rgba(6,182,212,.5); }
+.arena-avatar.arena-eliminated { filter: grayscale(1) brightness(0.35); opacity: 0.6; }
+.arena-avatar.arena-eliminated .arena-hp-fill { width: 0% !important; }
+.arena-avatar.arena-eliminated .arena-hp-text { content: '淘汰'; color: var(--red-glow); }
+.arena-avatar-circle { width: 48px; height: 48px; border-radius: 50%; overflow: hidden; border: 2px solid var(--border-color); background: var(--bg-card); cursor: pointer; transition: var(--transition); }
+.arena-avatar-circle:hover { border-color: var(--neon-purple); box-shadow: 0 0 10px rgba(168,85,247,.4); }
+.arena-avatar-circle img { width: 100%; height: 100%; object-fit: cover; }
+.arena-avatar-nick { font-size: .65rem; font-weight: 600; color: var(--text-primary); background: rgba(10,10,26,.85); padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
+.arena-hp-text { font-size: .7rem; font-weight: 800; color: var(--green-glow); font-family: var(--font-mono); min-width: 18px; text-align: center; }
+.arena-hp-bar { width: 48px; height: 4px; background: rgba(255,255,255,.1); border-radius: 2px; overflow: hidden; }
+.arena-hp-fill { height: 100%; background: var(--green-glow); transition: width .3s ease, background .3s ease; }
+
+.dpad-container { position: absolute; bottom: 20px; left: 20px; z-index: 100; }
+.dpad { display: grid; grid-template-columns: repeat(3, 48px); grid-template-rows: repeat(3, 48px); gap: 2px; }
+.dpad-btn { background: rgba(18,18,42,.85); border: 1px solid var(--border-color); border-radius: 10px; color: var(--text-primary); font-size: 1.1rem; cursor: pointer; display: flex; align-items: center; justify-content: center; user-select: none; -webkit-user-select: none; touch-action: none; transition: var(--transition); }
+.dpad-btn:active { background: var(--neon-purple); border-color: var(--neon-purple); box-shadow: 0 0 12px rgba(168,85,247,.5); }
+.dpad-center { display: flex; align-items: center; justify-content: center; font-size: 1.1rem; opacity: .3; }
+.dpad-up { grid-column: 2; grid-row: 1; }
+.dpad-left { grid-column: 1; grid-row: 2; }
+.dpad-right { grid-column: 3; grid-row: 2; }
+.dpad-down { grid-column: 2; grid-row: 3; }
+
+.arena-items { position: absolute; bottom: 24px; right: 20px; display: flex; gap: 8px; z-index: 100; }
+.arena-item-btn { width: 44px; height: 44px; font-size: 1.3rem; border-radius: 50%; border: 2px solid var(--border-color); background: rgba(18,18,42,.85); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: var(--transition); touch-action: none; }
+.arena-item-btn:active { transform: scale(.9); border-color: var(--neon-purple); }
+.arena-item-btn.armed { border-color: var(--gold); box-shadow: 0 0 14px rgba(251,191,36,.5); transform: scale(1.15); }
+
+.kill-feed { position: absolute; top: 56px; right: 12px; display: flex; flex-direction: column; gap: 4px; z-index: 50; pointer-events: none; max-width: 80%; }
+.kill-feed-item { padding: 6px 12px; background: rgba(18,18,42,.92); border: 1px solid var(--red-glow); border-radius: 8px; font-size: .75rem; color: var(--text-primary); animation: killFeedIn .3s ease; }
+.kf-killer { color: var(--green-glow); font-weight: 700; }
+.kf-victim { color: var(--red-glow); font-weight: 700; }
+.kf-assist { color: var(--text-muted); font-size: .7rem; }
+@keyframes killFeedIn { from { transform: translateX(30px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+/* Arena 响应式 */
+@media(max-width:600px){
+  .arena-timer { font-size: 1.2rem; }
+  .arena-avatar-circle { width: 40px; height: 40px; }
+  .arena-hp-bar { width: 40px; }
+  .dpad { grid-template-columns: repeat(3, 42px); grid-template-rows: repeat(3, 42px); }
+  .dpad-container { bottom: 14px; left: 14px; }
+  .arena-items { bottom: 18px; right: 14px; gap: 6px; }
+  .arena-item-btn { width: 38px; height: 38px; font-size: 1.1rem; }
+  .kill-feed { top: 50px; right: 8px; }
+  .kill-feed-item { font-size: .7rem; padding: 4px 10px; }
+  .arena-avatar-nick { font-size: .6rem; }
+  .arena-hp-text { font-size: .65rem; }
+}
+@media(max-width:374px){
+  .arena-timer { font-size: 1rem; min-width: 60px; }
+  .arena-avatar-circle { width: 34px; height: 34px; }
+  .arena-hp-bar { width: 34px; height: 3px; }
+  .dpad { grid-template-columns: repeat(3, 36px); grid-template-rows: repeat(3, 36px); }
+  .arena-item-btn { width: 32px; height: 32px; font-size: .95rem; }
+}
+
 /* ====== 响应式 ====== */
 @media(max-width:600px){
   .lobby-main{flex-direction:column}
