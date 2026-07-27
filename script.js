@@ -1577,7 +1577,7 @@
   }
 
   // ===================== 大乱斗 (Arena) =====================
-  function enterArenaPhase(players, duration) {
+  async function enterArenaPhase(players, duration) {
     stopAllIntervals();
     gameResults.clear();
     switchView('arena');
@@ -1592,8 +1592,19 @@
     lastMoveDir = { x: 0, y: -1 };
     arenaProjectiles = [];
 
-    // 获取当前用户头像
+    // 获取所有玩家头像（从users表批量查询）
+    const playerTokens = players.map(p => p.player_token);
+    let avatarMap = {};
+    try {
+      const { data: userRows } = await supabase.from('users').select('player_token, avatar_b64').in('player_token', playerTokens);
+      if (userRows) {
+        userRows.forEach(u => { avatarMap[u.player_token] = u.avatar_b64 || ''; });
+      }
+    } catch(e) {}
+    // 补充在线用户数据（兜底）
+    onlineUsers.forEach(u => { if (u.avatar_b64 && !avatarMap[u.player_token]) avatarMap[u.player_token] = u.avatar_b64; });
     const myAvatar = (myProfile && myProfile.avatar_b64) ? myProfile.avatar_b64 : '';
+    avatarMap[playerToken] = myAvatar;
 
     const stageW = arenaStage.clientWidth || 400;
     const stageH = arenaStage.clientHeight || 400;
@@ -1607,9 +1618,8 @@
       const x = cx + Math.cos(angle) * radius;
       const y = cy + Math.sin(angle) * radius;
 
-      // 获取头像：优先从在线用户中查找
-      const onlineUser = onlineUsers.find(u => u.player_token === p.player_token);
-      const avatar = onlineUser ? onlineUser.avatar_b64 : (p.player_token === playerToken ? myAvatar : '');
+      // 获取头像
+      const avatar = avatarMap[p.player_token] || '';
 
       const div = document.createElement('div');
       div.className = 'arena-avatar';
