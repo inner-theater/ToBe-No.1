@@ -1475,6 +1475,16 @@
           target.targetY = p.y;
           target.targetVx = p.vx || 0;
           target.targetVy = p.vy || 0;
+          // 同步血量（位置广播每100ms一次，保证围观者实时看到）
+          if (typeof p.hp === 'number') {
+            target.hp = p.hp;
+            if (!p.alive && target.alive) {
+              // 如果对方已淘汰但本地还没同步，触发消除
+              target.alive = false;
+              target.el.classList.add('arena-eliminated');
+            }
+            updateArenaHpDisplay(p.token);
+          }
         }
       })
       .on('broadcast', { event: 'arena_throw' }, payload => {
@@ -1560,6 +1570,11 @@
           me.lastHitTime = Date.now();
           me.hitHistory.push({ attacker: d.from, time: Date.now() });
           updateArenaHpDisplay(playerToken);
+          // 广播HP更新给所有围观者
+          gameChannel.send({
+            type: 'broadcast', event: 'arena_hp_update',
+            payload: { token: playerToken, hp: me.hp }
+          });
           if (me.hp <= 0) {
             const assistCutoff = Date.now() - 10000;
             const assistants = [...new Set(
