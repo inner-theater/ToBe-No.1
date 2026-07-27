@@ -1648,8 +1648,6 @@
       `;
       if (p.player_token === playerToken) {
         div.classList.add('arena-self');
-      } else {
-        div.addEventListener('click', () => handleArenaPlayerClick(p));
       }
       arenaStage.appendChild(div);
 
