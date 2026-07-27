@@ -1,4 +1,6 @@
 .codebuddy/
+.workbuddy/
 .DS_Store
 Thumbs.db
 *.log
+fetched-page.html
