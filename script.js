@@ -1696,20 +1696,15 @@
         me.y += me.vy * dt;
       }
 
-      // 远程玩家：速度预测 + 插值修正
+      // 远程玩家：插值追赶（高频广播下效果更好）
       const tokens = Object.keys(arenaPlayers);
       for (const t of tokens) {
         if (t === playerToken) continue;
         const p = arenaPlayers[t];
         if (!p.alive) continue;
-        const lerp = 0.15;
         const prevX = p.x, prevY = p.y;
-        // 用速度往前推（预测，让运动更连续）
-        p.x += (p.vx || 0) * dt * 1.3;
-        p.y += (p.vy || 0) * dt * 1.3;
-        // 向目标位置修正
-        p.x += (p.targetX - p.x) * lerp * dt;
-        p.y += (p.targetY - p.y) * lerp * dt;
+        p.x += (p.targetX - p.x) * 0.25 * dt;
+        p.y += (p.targetY - p.y) * 0.25 * dt;
         p.vx = (p.x - prevX) * dt;
         p.vy = (p.y - prevY) * dt;
       }
