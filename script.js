@@ -1471,11 +1471,10 @@
         const p = payload.payload;
         if (p.token !== playerToken && arenaPlayers[p.token]) {
           const target = arenaPlayers[p.token];
-          // 最小移动阈值：只有位置变化超过3px才更新，避免微小抖动
-          if (Math.abs(p.x - target.targetX) > 3 || Math.abs(p.y - target.targetY) > 3) {
-            target.targetX = p.x;
-            target.targetY = p.y;
-          }
+          target.targetX = p.x;
+          target.targetY = p.y;
+          target.targetVx = p.vx || 0;
+          target.targetVy = p.vy || 0;
         }
       })
       .on('broadcast', { event: 'arena_throw' }, payload => {
@@ -1661,6 +1660,7 @@
         alive: true, eliminatedAt: null,
         nickname: p.name, avatar: avatar,
         targetX: x, targetY: y,
+        targetVx: 0, targetVy: 0,  // 远程玩家速度目标
         lastHitBy: null, lastHitTime: 0,
         hitHistory: [], survivalTime: 0
       };
@@ -1698,14 +1698,20 @@
         me.y += me.vy * dt;
       }
 
-      // 远程玩家：插值追赶
+      // 远程玩家：航位推测（用速度驱动，位置轻柔修正）
       const tokens = Object.keys(arenaPlayers);
       for (const t of tokens) {
         if (t === playerToken) continue;
         const p = arenaPlayers[t];
         if (!p.alive) continue;
-        p.x += (p.targetX - p.x) * 0.18 * dt;
-        p.y += (p.targetY - p.y) * 0.18 * dt;
+        // 用广播来的速度驱动移动（和本地玩家速度一致，消除卡顿）
+        p.vx = p.targetVx || 0;
+        p.vy = p.targetVy || 0;
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        // 非常轻柔地向目标位置修正（仅消除累积误差）
+        p.x += (p.targetX - p.x) * 0.06;
+        p.y += (p.targetY - p.y) * 0.06;
       }
 
       // 墙壁反弹（所有存活玩家）
