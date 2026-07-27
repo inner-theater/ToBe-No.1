@@ -1527,7 +1527,8 @@
         const proj = {
           x: d.x, y: d.y, vx: d.vx, vy: d.vy,
           ownerToken: d.from, ammoType: d.ammo,
-          alive: true, el: null
+          alive: true, el: null,
+          createdAt: Date.now(), bounces: 0
         };
         const el = document.createElement('span');
         el.className = 'arena-projectile';
@@ -1732,7 +1733,7 @@
       }
 
       // 弹射物碰撞检测
-      updateArenaProjectiles();
+      updateArenaProjectiles(dt);
 
       for (const t of tokens) {
         const p = arenaPlayers[t];
@@ -1780,7 +1781,9 @@
       ownerToken: playerToken,
       ammoType: ammoType,
       el: null,
-      alive: true
+      alive: true,
+      createdAt: Date.now(),
+      bounces: 0
     };
 
     // 创建 DOM 元素
@@ -1802,28 +1805,40 @@
     }
   }
 
-  function updateArenaProjectiles() {
+  function updateArenaProjectiles(dt) {
+    dt = dt || 1;
     const stageW = arenaStage.clientWidth || 400;
     const stageH = arenaStage.clientHeight || 400;
     const avatarSize = 52;
+    const now = Date.now();
 
     for (let i = arenaProjectiles.length - 1; i >= 0; i--) {
       const proj = arenaProjectiles[i];
       if (!proj.alive) continue;
 
-      proj.x += proj.vx;
-      proj.y += proj.vy;
+      // 超时移除（2.5秒）
+      if (now - proj.createdAt > 2500) { removeProjectile(i); continue; }
 
-      // 墙壁反弹
-      if (proj.x < 0 || proj.x > stageW) proj.vx *= -0.5;
-      if (proj.y < 0 || proj.y > stageH) proj.vy *= -0.5;
+      proj.x += proj.vx * dt;
+      proj.y += proj.vy * dt;
 
-      // 出界移除
-      if (proj.x < -50 || proj.x > stageW + 50 || proj.y < -50 || proj.y > stageH + 50 ||
-          proj.x < 0 && (proj.vx < 0) || proj.x > stageW && (proj.vx > 0) ||
-          proj.y < 0 && (proj.vy < 0) || proj.y > stageH && (proj.vy > 0)) {
-        removeProjectile(i);
-        continue;
+      // 速度太慢移除
+      if (Math.abs(proj.vx) + Math.abs(proj.vy) < 0.3) { removeProjectile(i); continue; }
+
+      // 墙壁反弹（最多3次）
+      let bounced = false;
+      if (proj.x < 0) { proj.x = 0; proj.vx = Math.abs(proj.vx) * 0.6; bounced = true; }
+      if (proj.x > stageW) { proj.x = stageW; proj.vx = -Math.abs(proj.vx) * 0.6; bounced = true; }
+      if (proj.y < 0) { proj.y = 0; proj.vy = Math.abs(proj.vy) * 0.6; bounced = true; }
+      if (proj.y > stageH) { proj.y = stageH; proj.vy = -Math.abs(proj.vy) * 0.6; bounced = true; }
+      if (bounced) {
+        proj.bounces++;
+        if (proj.bounces >= 3) { removeProjectile(i); continue; }
+      }
+
+      // 出界移除（简化判断）
+      if (proj.x < -30 || proj.x > stageW + 30 || proj.y < -30 || proj.y > stageH + 30) {
+        removeProjectile(i); continue;
       }
 
       // 碰撞检测：与所有存活玩家
