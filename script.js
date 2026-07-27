@@ -1470,10 +1470,12 @@
       .on('broadcast', { event: 'arena_pos' }, payload => {
         const p = payload.payload;
         if (p.token !== playerToken && arenaPlayers[p.token]) {
-          arenaPlayers[p.token].targetX = p.x;
-          arenaPlayers[p.token].targetY = p.y;
-          arenaPlayers[p.token].vx = p.vx || 0;
-          arenaPlayers[p.token].vy = p.vy || 0;
+          const target = arenaPlayers[p.token];
+          // 最小移动阈值：只有位置变化超过3px才更新，避免微小抖动
+          if (Math.abs(p.x - target.targetX) > 3 || Math.abs(p.y - target.targetY) > 3) {
+            target.targetX = p.x;
+            target.targetY = p.y;
+          }
         }
       })
       .on('broadcast', { event: 'arena_throw' }, payload => {
@@ -1668,7 +1670,7 @@
     startArenaTimer();
     setupArenaJoystick();
     setupArenaKeyboard();
-    arenaPosInterval = setInterval(broadcastArenaPosition, 50);
+    arenaPosInterval = setInterval(broadcastArenaPosition, 100);
     updateArenaAliveCount();
   }
 
@@ -1696,17 +1698,14 @@
         me.y += me.vy * dt;
       }
 
-      // 远程玩家：插值追赶（高频广播下效果更好）
+      // 远程玩家：插值追赶
       const tokens = Object.keys(arenaPlayers);
       for (const t of tokens) {
         if (t === playerToken) continue;
         const p = arenaPlayers[t];
         if (!p.alive) continue;
-        const prevX = p.x, prevY = p.y;
-        p.x += (p.targetX - p.x) * 0.25 * dt;
-        p.y += (p.targetY - p.y) * 0.25 * dt;
-        p.vx = (p.x - prevX) * dt;
-        p.vy = (p.y - prevY) * dt;
+        p.x += (p.targetX - p.x) * 0.18 * dt;
+        p.y += (p.targetY - p.y) * 0.18 * dt;
       }
 
       // 墙壁反弹（所有存活玩家）
