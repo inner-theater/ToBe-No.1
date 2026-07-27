@@ -116,6 +116,7 @@
   let arenaStartTime  = 0; // 游戏开始时间戳
   let arenaArmedItem  = null; // 保留引用
   let currentAmmo     = 'tomato'; // 当前选中的弹药类型
+  let lastMoveDir     = { x: 0, y: -1 }; // 上一次移动方向（默认朝上）
 
   // ===================== Supabase =====================
   const supabase = window.supabase.createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.key);
@@ -1588,6 +1589,7 @@
     arenaMoveDir = { x: 0, y: 0 };
     arenaArmedItem = null;
     currentAmmo = 'tomato';
+    lastMoveDir = { x: 0, y: -1 };
     arenaProjectiles = [];
 
     // 获取当前用户头像
@@ -1743,11 +1745,15 @@
     if (now - lastItemTime < 600) return;
     lastItemTime = now;
 
-    // 发射方向：摇杆方向，如果不动则用上一个方向
+    // 发射方向：当前摇杆方向，如果不动则用上次方向
     let dx = arenaMoveDir.x;
     let dy = arenaMoveDir.y;
     if (dx === 0 && dy === 0) {
-      dx = 0; dy = -1; // 默认向上
+      dx = lastMoveDir.x;
+      dy = lastMoveDir.y;
+    } else {
+      lastMoveDir.x = dx;
+      lastMoveDir.y = dy;
     }
     const len = Math.sqrt(dx*dx + dy*dy);
     if (len < 0.01) { dx = 0; dy = -1; }
@@ -1936,6 +1942,8 @@
       knob.style.transform = `translate(${-50 + dx / radius * 50}%,${-50 + dy / radius * 50}%)`;
       arenaMoveDir.x = dx / maxDist;
       arenaMoveDir.y = dy / maxDist;
+      lastMoveDir.x = arenaMoveDir.x;
+      lastMoveDir.y = arenaMoveDir.y;
     }
 
     function resetJoystick() {
@@ -1974,6 +1982,7 @@
         if (x !== 0 && y !== 0) { x *= 0.707; y *= 0.707; }
         arenaMoveDir.x = x;
         arenaMoveDir.y = y;
+        if (x !== 0 || y !== 0) { lastMoveDir.x = x; lastMoveDir.y = y; }
       }
       // 空格发射
       if (k === ' ' || k === 'spacebar') {
@@ -2010,6 +2019,8 @@
     if (len < 1) return;
     arenaMoveDir.x = dx / len;
     arenaMoveDir.y = dy / len;
+    lastMoveDir.x = arenaMoveDir.x;
+    lastMoveDir.y = arenaMoveDir.y;
     showToast(`已瞄准 ${escapeHTML(playerInfo.name)}，点击🔥发射`);
   }
 
