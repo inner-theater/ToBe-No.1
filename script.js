@@ -1975,16 +1975,19 @@
       let dx = clientX - cx;
       let dy = clientY - cy;
       const dist = Math.sqrt(dx*dx + dy*dy);
-      if (dist < 8) {
+      if (dist < 10) { // 加大死区到10px，防止手轻微触碰导致抖动
         knob.style.transform = 'translate(-50%,-50%)';
         arenaMoveDir.x = 0;
         arenaMoveDir.y = 0;
         return;
       }
       if (dist > maxDist) { dx = dx / dist * maxDist; dy = dy / dist * maxDist; }
+      const normX = dx / maxDist;
+      const normY = dy / maxDist;
       knob.style.transform = `translate(${-50 + dx / radius * 50}%,${-50 + dy / radius * 50}%)`;
-      arenaMoveDir.x = dx / maxDist;
-      arenaMoveDir.y = dy / maxDist;
+      // 平滑过渡摇杆值，防抖动
+      arenaMoveDir.x += (normX - arenaMoveDir.x) * 0.4;
+      arenaMoveDir.y += (normY - arenaMoveDir.y) * 0.4;
       lastMoveDir.x = arenaMoveDir.x;
       lastMoveDir.y = arenaMoveDir.y;
     }
@@ -2042,14 +2045,14 @@
     if (!arenaGameActive || !gameChannel) return;
     const me = arenaPlayers[playerToken];
     if (!me) return;
-    // 速度太小时归零，减少广播噪音
-    let vx = Math.abs(me.vx) < 0.2 ? 0 : me.vx;
-    let vy = Math.abs(me.vy) < 0.2 ? 0 : me.vy;
+    // 量化速度到0.5步长 + 死区0.3，消除手机摇杆微小波动
+    const quantize = v => Math.abs(v) < 0.3 ? 0 : Math.round(v * 2) / 2;
+    let vx = quantize(me.vx);
+    let vy = quantize(me.vy);
     gameChannel.send({
       type: 'broadcast', event: 'arena_pos',
       payload: { token: playerToken, x: Math.round(me.x), y: Math.round(me.y),
-                 vx: Math.round(vx * 10) / 10, vy: Math.round(vy * 10) / 10,
-                 hp: me.hp, alive: me.alive }
+                 vx, vy, hp: me.hp, alive: me.alive }
     });
   }
 
