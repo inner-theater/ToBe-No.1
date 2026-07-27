@@ -1472,6 +1472,8 @@
         if (p.token !== playerToken && arenaPlayers[p.token]) {
           arenaPlayers[p.token].targetX = p.x;
           arenaPlayers[p.token].targetY = p.y;
+          arenaPlayers[p.token].vx = p.vx || 0;
+          arenaPlayers[p.token].vy = p.vy || 0;
         }
       })
       .on('broadcast', { event: 'arena_throw' }, payload => {
@@ -1666,7 +1668,7 @@
     startArenaTimer();
     setupArenaJoystick();
     setupArenaKeyboard();
-    arenaPosInterval = setInterval(broadcastArenaPosition, 100);
+    arenaPosInterval = setInterval(broadcastArenaPosition, 50);
     updateArenaAliveCount();
   }
 
@@ -1694,17 +1696,20 @@
         me.y += me.vy * dt;
       }
 
-      // 远程玩家：插值 + 派生速度用于反弹
+      // 远程玩家：速度预测 + 插值修正
       const tokens = Object.keys(arenaPlayers);
       for (const t of tokens) {
         if (t === playerToken) continue;
         const p = arenaPlayers[t];
         if (!p.alive) continue;
-        const lerp = 0.18;
+        const lerp = 0.15;
         const prevX = p.x, prevY = p.y;
+        // 用速度往前推（预测，让运动更连续）
+        p.x += (p.vx || 0) * dt * 1.3;
+        p.y += (p.vy || 0) * dt * 1.3;
+        // 向目标位置修正
         p.x += (p.targetX - p.x) * lerp * dt;
         p.y += (p.targetY - p.y) * lerp * dt;
-        // 派生速度（用于反弹效果）
         p.vx = (p.x - prevX) * dt;
         p.vy = (p.y - prevY) * dt;
       }
@@ -2039,7 +2044,9 @@
     if (!me) return;
     gameChannel.send({
       type: 'broadcast', event: 'arena_pos',
-      payload: { token: playerToken, x: Math.round(me.x), y: Math.round(me.y), hp: me.hp, alive: me.alive }
+      payload: { token: playerToken, x: Math.round(me.x), y: Math.round(me.y),
+                 vx: Math.round(me.vx * 10) / 10, vy: Math.round(me.vy * 10) / 10,
+                 hp: me.hp, alive: me.alive }
     });
   }
 
