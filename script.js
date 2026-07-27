@@ -1536,9 +1536,10 @@
       // ===== 新增：弹射物系统事件 =====
       .on('broadcast', { event: 'arena_shoot' }, payload => {
         const d = payload.payload;
-        if (d.from === playerToken) return; // 自己发射的已经在本地处理了
+        if (d.from === playerToken) return;
         if (!arenaGameActive) return;
-        // 在远程玩家屏幕上也创建弹射物
+        // 每人同时只能有1个弹射物（远程也一样）
+        if (arenaProjectiles.some(p => p.ownerToken === d.from && p.alive)) return;
         const proj = {
           x: d.x, y: d.y, vx: d.vx, vy: d.vy,
           ownerToken: d.from, ammoType: d.ammo,
@@ -1785,8 +1786,10 @@
     if (!arenaGameActive) return;
     const me = arenaPlayers[playerToken];
     if (!me || !me.alive) return;
+    // 每人场上同时只能有1个弹射物
+    if (arenaProjectiles.some(p => p.ownerToken === playerToken && p.alive)) return;
     const now = Date.now();
-    if (now - lastItemTime < 1200) return;
+    if (now - lastItemTime < 1500) return;
     lastItemTime = now;
 
     // 发射方向：当前摇杆方向，如果不动则用上次方向
