@@ -1154,6 +1154,8 @@
     localStorage.removeItem('active_room_id');
     localStorage.removeItem('active_room_name');
     localStorage.removeItem('active_room_owner');
+    localStorage.removeItem('active_game_mode');
+    localStorage.removeItem('active_game_data');
     enterLobby();
   }
 
@@ -1592,6 +1594,14 @@
     currentAmmo = 'tomato';
     lastMoveDir = { x: 0, y: -1 };
     arenaProjectiles = [];
+
+    // 保存游戏会话，支持断线重连
+    localStorage.setItem('active_game_mode', 'arena');
+    localStorage.setItem('active_game_data', JSON.stringify({
+      duration: duration,
+      startTime: Date.now(),
+      players: players.map(p => ({ player_token: p.player_token, name: p.name }))
+    }));
 
     // 获取所有玩家头像（从users表批量查询）
     const playerTokens = players.map(p => p.player_token);
@@ -2177,6 +2187,8 @@
     // 清理弹射物
     arenaProjectiles.forEach(p => { if (p.el && p.el.parentNode) p.el.remove(); });
     arenaProjectiles = [];
+    localStorage.removeItem('active_game_mode');
+    localStorage.removeItem('active_game_data');
     const gameDuration = (Date.now() - arenaStartTime) / 1000;
     Object.keys(arenaPlayers).forEach(t => {
       const p = arenaPlayers[t];
@@ -2312,6 +2324,54 @@
   clickBtn.addEventListener('touchstart', e => { e.preventDefault(); handleClick(e); });
   clickBtn.addEventListener('dblclick', e => e.preventDefault());
 
+  // ===================== 断线重连大乱斗 =====================
+  async function reconnectArena() {
+    const savedRoomId = localStorage.getItem('active_room_id');
+    const savedGameData = JSON.parse(localStorage.getItem('active_game_data') || '{}');
+    if (!savedRoomId) { enterLobby(); return; }
+
+    const { data: room } = await supabase.from('rooms').select('*').eq('id', savedRoomId).single();
+    if (!room || !room.is_active) {
+      localStorage.removeItem('active_room_id');
+      localStorage.removeItem('active_game_mode');
+      localStorage.removeItem('active_game_data');
+      enterLobby();
+      return;
+    }
+
+    currentRoom = room;
+    roomId = room.id;
+    isRoomOwner = localStorage.getItem('active_room_owner') === '1';
+
+    const { data: member } = await supabase.from('room_members').select('*').eq('room_id', roomId).eq('user_token', playerToken);
+    if (!member || member.length === 0) {
+      await supabase.from('room_members').insert({ room_id: roomId, user_token: playerToken, is_owner: isRoomOwner });
+    }
+
+    const savedNick = localStorage.getItem('profile_nickname');
+    if (savedNick) {
+      supabase.from('users').update({ is_online: true, last_seen: new Date().toISOString() }).eq('nickname', savedNick).then(()=>{}).catch(()=>{});
+    }
+
+    roomExpiryWarned = false;
+    startRoomExpiryTimer();
+    setupGameRealtime();
+
+    // 等频道建立
+    await new Promise(r => setTimeout(r, 600));
+
+    const players = (savedGameData.players || []).map(p => ({ name: p.name, player_token: p.player_token }));
+    const elapsed = savedGameData.startTime ? Math.floor((Date.now() - savedGameData.startTime) / 1000) : 0;
+    const remaining = Math.max(10, (savedGameData.duration || 600) - elapsed);
+
+    if (gameChannel) {
+      gameChannel.send({ type: 'broadcast', event: 'arena_reconnect', payload: { token: playerToken } });
+    }
+
+    await enterArenaPhase(players, remaining);
+    showToast('已重连回大乱斗！');
+  }
+
   // ===================== 初始化 =====================
   async function init() {
     playerToken = localStorage.getItem('player_token');
@@ -2351,8 +2411,16 @@
           if (!member || member.length === 0) {
             await supabase.from('room_members').insert({ room_id: roomId, user_token: playerToken, is_owner: isRoomOwner });
           }
-          // 在线（不覆盖 player_token，避免 room_members 关联丢失）
+          // 在线
           await supabase.from('users').update({ is_online: true, last_seen: new Date().toISOString() }).eq('nickname', savedNick);
+
+          // === 检查是否有活跃的游戏（断线重连）===
+          const savedGameMode = localStorage.getItem('active_game_mode');
+          if (savedGameMode === 'arena') {
+            await reconnectArena();
+            return;
+          }
+
           enterWaitingRoom(room);
           return;
         }
