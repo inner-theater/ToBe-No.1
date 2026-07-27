@@ -1698,20 +1698,20 @@
         me.y += me.vy * dt;
       }
 
-      // 远程玩家：航位推测（用速度驱动，位置轻柔修正）
+      // 远程玩家：速度平滑过渡 + 位置修正
       const tokens = Object.keys(arenaPlayers);
       for (const t of tokens) {
         if (t === playerToken) continue;
         const p = arenaPlayers[t];
         if (!p.alive) continue;
-        // 用广播来的速度驱动移动（和本地玩家速度一致，消除卡顿）
-        p.vx = p.targetVx || 0;
-        p.vy = p.targetVy || 0;
+        // 速度平滑过渡到目标速度（消除抖动）
+        p.vx += ((p.targetVx || 0) - p.vx) * 0.25;
+        p.vy += ((p.targetVy || 0) - p.vy) * 0.25;
         p.x += p.vx * dt;
         p.y += p.vy * dt;
-        // 非常轻柔地向目标位置修正（仅消除累积误差）
-        p.x += (p.targetX - p.x) * 0.06;
-        p.y += (p.targetY - p.y) * 0.06;
+        // 轻柔消除漂移
+        p.x += (p.targetX - p.x) * 0.03;
+        p.y += (p.targetY - p.y) * 0.03;
       }
 
       // 墙壁反弹（所有存活玩家）
@@ -2042,10 +2042,13 @@
     if (!arenaGameActive || !gameChannel) return;
     const me = arenaPlayers[playerToken];
     if (!me) return;
+    // 速度太小时归零，减少广播噪音
+    let vx = Math.abs(me.vx) < 0.2 ? 0 : me.vx;
+    let vy = Math.abs(me.vy) < 0.2 ? 0 : me.vy;
     gameChannel.send({
       type: 'broadcast', event: 'arena_pos',
       payload: { token: playerToken, x: Math.round(me.x), y: Math.round(me.y),
-                 vx: Math.round(me.vx * 10) / 10, vy: Math.round(me.vy * 10) / 10,
+                 vx: Math.round(vx * 10) / 10, vy: Math.round(vy * 10) / 10,
                  hp: me.hp, alive: me.alive }
     });
   }
