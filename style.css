@@ -290,7 +290,8 @@ body::before{
 .owner-reset{text-align:center;margin-top:20px;padding-bottom:20px}
 
 /* ====== 5. 大乱斗 Arena ====== */
-#arena-view { padding: 0; height: 100vh; height: 100dvh; display: flex; flex-direction: column; background: var(--bg-deep); }
+#arena-view { padding: 0; height: 100vh; height: 100dvh; background: var(--bg-deep); display: none; }
+#arena-view.active { display: flex; flex-direction: column; }
 .arena-topbar { display: flex; align-items: center; justify-content: space-between; padding: 8px 16px; background: var(--bg-card); border-bottom: 1px solid var(--border-color); flex-shrink: 0; z-index: 30; }
 .arena-timer { font-size: 1.5rem; font-weight: 900; font-family: var(--font-mono); color: var(--neon-cyan); text-shadow: 0 0 10px rgba(6,182,212,.5); min-width: 72px; }
 .arena-alive { font-size: .85rem; color: var(--text-secondary); font-weight: 600; }
