@@ -1555,50 +1555,20 @@
         proj.el = el;
         arenaProjectiles.push(proj);
       })
-      .on('broadcast', { event: 'arena_projectile_hit' }, payload => {
+      .on('broadcast', { event: 'arena_self_hit' }, payload => {
         const d = payload.payload;
-        // 所有玩家同步目标的最新HP
-        if (d.to !== playerToken && arenaPlayers[d.to]) {
-          arenaPlayers[d.to].hp = typeof d.hp === 'number' ? d.hp : Math.max(0, (arenaPlayers[d.to].hp || 15) - 1);
-          updateArenaHpDisplay(d.to);
-        }
-        if (d.to === playerToken) {
-          // 我被打中了
-          const me = arenaPlayers[playerToken];
-          if (!me || !me.alive) return;
-          me.hp = typeof d.hp === 'number' ? d.hp : Math.max(0, me.hp - 1);
-          me.lastHitBy = d.from;
-          me.lastHitTime = Date.now();
-          me.hitHistory.push({ attacker: d.from, time: Date.now() });
-          updateArenaHpDisplay(playerToken);
-          // 本地命中反馈：震动+击中特效（即使弹射物视觉没到，也让玩家知道被打）
-          me.el.classList.add('avatar-impact');
-          setTimeout(() => me.el.classList.remove('avatar-impact'), 500);
-          const hitEl = document.createElement('span');
-          hitEl.className = 'hit-effect';
-          hitEl.textContent = ITEM_EFFECTS[d.ammo] ? ITEM_EFFECTS[d.ammo].emoji : '💥';
-          hitEl.style.left = (me.x + 26) + 'px';
-          hitEl.style.top = (me.y + 26) + 'px';
-          arenaStage.appendChild(hitEl);
-          setTimeout(() => hitEl.remove(), 600);
-          // 广播HP更新给所有围观者
-          gameChannel.send({
-            type: 'broadcast', event: 'arena_hp_update',
-            payload: { token: playerToken, hp: me.hp }
-          });
-          if (me.hp <= 0) {
-            const assistCutoff = Date.now() - 10000;
-            const assistants = [...new Set(
-              me.hitHistory.filter(h => h.time > assistCutoff && h.attacker !== d.from && h.attacker !== playerToken)
-                .map(h => h.attacker)
-            )];
-            gameChannel.send({
-              type: 'broadcast', event: 'arena_eliminated',
-              payload: { token: playerToken, killed_by: d.from, assistants, time: Date.now() }
-            });
-            arenaEliminatePlayer(playerToken, d.from, assistants);
-          }
-        }
+        if (!arenaPlayers[d.to]) return;
+        // 攻击者和围观者同步目标最新HP
+        arenaPlayers[d.to].hp = typeof d.hp === 'number' ? d.hp : Math.max(0, (arenaPlayers[d.to].hp || 15) - 1);
+        updateArenaHpDisplay(d.to);
+        // 攻击者播放命中反馈
+        const hitEl = document.createElement('span');
+        hitEl.className = 'hit-effect';
+        hitEl.textContent = ITEM_EFFECTS[d.ammo] ? ITEM_EFFECTS[d.ammo].emoji : '💥';
+        hitEl.style.left = (d.x || 0) + 'px';
+        hitEl.style.top = (d.y || 0) + 'px';
+        arenaStage.appendChild(hitEl);
+        setTimeout(() => hitEl.remove(), 600);
       })
       .subscribe();
   }
@@ -1887,49 +1857,51 @@
         removeProjectile(i); continue;
       }
 
-      // 碰撞检测：与所有存活玩家
-      const tokens = Object.keys(arenaPlayers);
-      let hit = false;
-      for (const t of tokens) {
-        const p = arenaPlayers[t];
-        if (!p.alive || t === proj.ownerToken) continue;
-        const cx = p.x + avatarSize/2, cy = p.y + avatarSize/2;
+      // 碰撞检测：只检测是否命中本地玩家（被打者自己决定，100%准确）
+      const me = arenaPlayers[playerToken];
+      if (me && me.alive && proj.ownerToken !== playerToken) {
+        const cx = me.x + avatarSize/2, cy = me.y + avatarSize/2;
         const dx = proj.x - cx, dy = proj.y - cy;
         const dist = Math.sqrt(dx*dx + dy*dy);
-        if (dist < 28) { // 命中
-          hit = true;
-          // 扣血
-          p.hp = Math.max(0, p.hp - 1);
-          updateArenaHpDisplay(t);
-          // 击中动画
+        if (dist < 28) { // 命中本地玩家
+          removeProjectile(i);
+          me.hp = Math.max(0, me.hp - 1);
+          me.lastHitBy = proj.ownerToken;
+          me.lastHitTime = Date.now();
+          me.hitHistory.push({ attacker: proj.ownerToken, time: Date.now() });
+          updateArenaHpDisplay(playerToken);
+          // 本地命中特效
           const hitEl = document.createElement('span');
           hitEl.className = 'hit-effect';
           hitEl.textContent = ITEM_EFFECTS[proj.ammoType] ? ITEM_EFFECTS[proj.ammoType].emoji : '💥';
-          hitEl.style.left = (p.x + avatarSize/2) + 'px';
-          hitEl.style.top = (p.y + avatarSize/2) + 'px';
+          hitEl.style.left = (me.x + 26) + 'px';
+          hitEl.style.top = (me.y + 26) + 'px';
           arenaStage.appendChild(hitEl);
           setTimeout(() => hitEl.remove(), 600);
-          p.el.classList.add('avatar-impact');
-          setTimeout(() => p.el.classList.remove('avatar-impact'), 500);
-
-          // 广播命中（带上最新HP，让所有玩家同步）
-          if (gameChannel) {
-            gameChannel.send({
-              type: 'broadcast', event: 'arena_projectile_hit',
-              payload: { from: proj.ownerToken, to: t, ammo: proj.ammoType, hp: p.hp }
-            });
-          }
-
+          me.el.classList.add('avatar-impact');
+          setTimeout(() => me.el.classList.remove('avatar-impact'), 500);
+          // 广播：我被打中了
+          gameChannel.send({
+            type: 'broadcast', event: 'arena_self_hit',
+            payload: { from: proj.ownerToken, to: playerToken, ammo: proj.ammoType, hp: me.hp, x: me.x, y: me.y }
+          });
           // 淘汰判定
-          if (p.hp <= 0) {
-            arenaEliminatePlayer(t, proj.ownerToken, []);
+          if (me.hp <= 0) {
+            const assistCutoff = Date.now() - 10000;
+            const assistants = [...new Set(
+              me.hitHistory.filter(h => h.time > assistCutoff && h.attacker !== proj.ownerToken && h.attacker !== playerToken)
+                .map(h => h.attacker)
+            )];
+            gameChannel.send({
+              type: 'broadcast', event: 'arena_eliminated',
+              payload: { token: playerToken, killed_by: proj.ownerToken, assistants, time: Date.now() }
+            });
+            arenaEliminatePlayer(playerToken, proj.ownerToken, assistants);
           }
-          break;
+        } else {
+          proj.el.style.left = proj.x + 'px';
+          proj.el.style.top = proj.y + 'px';
         }
-      }
-
-      if (hit) {
-        removeProjectile(i);
       } else {
         proj.el.style.left = proj.x + 'px';
         proj.el.style.top = proj.y + 'px';
