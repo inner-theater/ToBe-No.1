@@ -1571,6 +1571,16 @@
           me.lastHitTime = Date.now();
           me.hitHistory.push({ attacker: d.from, time: Date.now() });
           updateArenaHpDisplay(playerToken);
+          // 本地命中反馈：震动+击中特效（即使弹射物视觉没到，也让玩家知道被打）
+          me.el.classList.add('avatar-impact');
+          setTimeout(() => me.el.classList.remove('avatar-impact'), 500);
+          const hitEl = document.createElement('span');
+          hitEl.className = 'hit-effect';
+          hitEl.textContent = ITEM_EFFECTS[d.ammo] ? ITEM_EFFECTS[d.ammo].emoji : '💥';
+          hitEl.style.left = (me.x + 26) + 'px';
+          hitEl.style.top = (me.y + 26) + 'px';
+          arenaStage.appendChild(hitEl);
+          setTimeout(() => hitEl.remove(), 600);
           // 广播HP更新给所有围观者
           gameChannel.send({
             type: 'broadcast', event: 'arena_hp_update',
