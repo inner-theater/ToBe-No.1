@@ -1997,24 +1997,20 @@
   }
 
   function handleArenaPlayerClick(playerInfo) {
+    // 点击头像不再自动发射，防止锁定太强
     if (!arenaGameActive) return;
+    showToast(`朝 ${escapeHTML(playerInfo.name)} 方向发射`);
     const me = arenaPlayers[playerToken];
-    if (!me || !me.alive) return;
     const target = arenaPlayers[playerInfo.player_token];
-    if (!target || !target.alive) return;
-    // 点击其他玩家 → 朝他的方向发射一枚炮弹
+    if (!me || !target || !me.alive || !target.alive) return;
     const avatarSize = 52;
     const dx = (target.x + avatarSize/2) - (me.x + avatarSize/2);
     const dy = (target.y + avatarSize/2) - (me.y + avatarSize/2);
     const len = Math.sqrt(dx*dx + dy*dy);
     if (len < 1) return;
-    // 临时设置摇杆方向到目标方向，然后发射
-    const savedDir = { x: arenaMoveDir.x, y: arenaMoveDir.y };
     arenaMoveDir.x = dx / len;
     arenaMoveDir.y = dy / len;
-    fireArenaProjectile(currentAmmo);
-    arenaMoveDir.x = savedDir.x;
-    arenaMoveDir.y = savedDir.y;
+    showToast(`已瞄准 ${escapeHTML(playerInfo.name)}，点击🔥发射`);
   }
 
   function arenaThrowItem(target, itemType) {
