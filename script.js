@@ -1543,11 +1543,16 @@
       })
       .on('broadcast', { event: 'arena_projectile_hit' }, payload => {
         const d = payload.payload;
+        // 所有玩家同步目标的最新HP
+        if (d.to !== playerToken && arenaPlayers[d.to]) {
+          arenaPlayers[d.to].hp = typeof d.hp === 'number' ? d.hp : Math.max(0, (arenaPlayers[d.to].hp || 15) - 1);
+          updateArenaHpDisplay(d.to);
+        }
         if (d.to === playerToken) {
           // 我被打中了
           const me = arenaPlayers[playerToken];
           if (!me || !me.alive) return;
-          me.hp = Math.max(0, me.hp - 1);
+          me.hp = typeof d.hp === 'number' ? d.hp : Math.max(0, me.hp - 1);
           me.lastHitBy = d.from;
           me.lastHitTime = Date.now();
           me.hitHistory.push({ attacker: d.from, time: Date.now() });
@@ -1876,11 +1881,11 @@
           p.el.classList.add('avatar-impact');
           setTimeout(() => p.el.classList.remove('avatar-impact'), 500);
 
-          // 广播命中
+          // 广播命中（带上最新HP，让所有玩家同步）
           if (gameChannel) {
             gameChannel.send({
               type: 'broadcast', event: 'arena_projectile_hit',
-              payload: { from: proj.ownerToken, to: t, ammo: proj.ammoType }
+              payload: { from: proj.ownerToken, to: t, ammo: proj.ammoType, hp: p.hp }
             });
           }
 
