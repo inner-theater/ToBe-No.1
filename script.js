@@ -1731,9 +1731,16 @@
       .on('broadcast', { event: 'arena_self_hit' }, payload => {
         const d = payload.payload;
         if (!arenaPlayers[d.to]) return;
+        const target = arenaPlayers[d.to];
         // 攻击者和围观者同步目标最新HP
-        arenaPlayers[d.to].hp = typeof d.hp === 'number' ? d.hp : Math.max(0, (arenaPlayers[d.to].hp || 15) - 1);
+        target.hp = typeof d.hp === 'number' ? d.hp : Math.max(0, (target.hp || 15) - 1);
         updateArenaHpDisplay(d.to);
+        // 如果我是攻击者，也给目标加上击退效果（视觉同步）
+        if (d.from === playerToken && d.vx && d.vy) {
+          const pushForce = 4;
+          target.vx = d.vx * pushForce;
+          target.vy = d.vy * pushForce;
+        }
         // 攻击者播放命中反馈
         const hitEl = document.createElement('span');
         hitEl.className = 'hit-effect';
@@ -2038,6 +2045,11 @@
         const dist = Math.sqrt(dx*dx + dy*dy);
         if (dist < 28) { // 命中本地玩家
           removeProjectile(i);
+          // ===== 击退：被弹射物命中后顺着弹道方向弹飞 =====
+          const pushForce = 4;
+          me.vx = proj.vx * pushForce;
+          me.vy = proj.vy * pushForce;
+          // 弹飞后墙壁反弹
           me.hp = Math.max(0, me.hp - 1);
           me.lastHitBy = proj.ownerToken;
           me.lastHitTime = Date.now();
@@ -2053,10 +2065,10 @@
           setTimeout(() => hitEl.remove(), 600);
           me.el.classList.add('avatar-impact');
           setTimeout(() => me.el.classList.remove('avatar-impact'), 500);
-          // 广播：我被打中了
+          // 广播：我被打中了（带上击退速度，让攻击者也看到弹飞效果）
           gameChannel.send({
             type: 'broadcast', event: 'arena_self_hit',
-            payload: { from: proj.ownerToken, to: playerToken, ammo: proj.ammoType, hp: me.hp, x: me.x, y: me.y }
+            payload: { from: proj.ownerToken, to: playerToken, ammo: proj.ammoType, hp: me.hp, x: me.x, y: me.y, vx: proj.vx, vy: proj.vy }
           });
           // 淘汰判定
           if (me.hp <= 0) {
