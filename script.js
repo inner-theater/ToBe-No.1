@@ -1717,7 +1717,7 @@
           x: d.x, y: d.y, vx: d.vx, vy: d.vy,
           ownerToken: d.from, ammoType: d.ammo,
           alive: true, el: null,
-          createdAt: Date.now(), bounces: 0
+          createdAt: Date.now(), bounces: 0, id: d.id || 0
         };
         const el = document.createElement('span');
         el.className = 'arena-projectile';
@@ -1732,23 +1732,37 @@
         const d = payload.payload;
         if (!arenaPlayers[d.to]) return;
         const target = arenaPlayers[d.to];
-        // 攻击者和围观者同步目标最新HP
+        // 1. 攻击者端移除对应的弹射物（防止穿透）
+        if (d.from === playerToken && d.pid) {
+          const idx = arenaProjectiles.findIndex(p => p.id === d.pid);
+          if (idx !== -1) removeProjectile(idx);
+        }
+        // 2. 同步血量
         target.hp = typeof d.hp === 'number' ? d.hp : Math.max(0, (target.hp || 15) - 1);
         updateArenaHpDisplay(d.to);
-        // 如果我是攻击者，也给目标加上击退效果（视觉同步）
+        // 3. 攻击者端同步击退（设置 targetVx/targetVy 让远程玩家物理生效）
         if (d.from === playerToken && d.vx && d.vy) {
           const pushForce = 4;
           target.vx = d.vx * pushForce;
           target.vy = d.vy * pushForce;
+          target.targetVx = target.vx;
+          target.targetVy = target.vy;
         }
-        // 攻击者播放命中反馈
+        // 4. 播放命中特效+变色
         const hitEl = document.createElement('span');
         hitEl.className = 'hit-effect';
-        hitEl.textContent = ITEM_EFFECTS[d.ammo] ? ITEM_EFFECTS[d.ammo].emoji : '💥';
+        const eff = ITEM_EFFECTS[d.ammo];
+        hitEl.textContent = eff ? eff.emoji : '💥';
         hitEl.style.left = (d.x || 0) + 'px';
         hitEl.style.top = (d.y || 0) + 'px';
         arenaStage.appendChild(hitEl);
         setTimeout(() => hitEl.remove(), 600);
+        target.el.classList.add('avatar-impact');
+        setTimeout(() => target.el.classList.remove('avatar-impact'), 500);
+        if (eff && eff.cls) {
+          target.el.classList.add(eff.cls);
+          setTimeout(() => target.el.classList.remove(eff.cls), 1200);
+        }
       })
       .subscribe();
   }
@@ -1941,6 +1955,7 @@
 
   // ===================== 弹射物系统 =====================
   let arenaProjectiles = [];
+  let projectileIdCounter = 0;
 
   function fireArenaProjectile(ammoType) {
     if (!arenaGameActive) return;
@@ -1972,6 +1987,7 @@
     const startY = me.y + avatarSize/2 + dy * 32;
 
     const proj = {
+      id: ++projectileIdCounter,
       x: startX, y: startY,
       vx: dx * speed, vy: dy * speed,
       ownerToken: playerToken,
@@ -1996,7 +2012,7 @@
     if (gameChannel) {
       gameChannel.send({
         type: 'broadcast', event: 'arena_shoot',
-        payload: { from: playerToken, x: startX, y: startY, vx: proj.vx, vy: proj.vy, ammo: ammoType }
+        payload: { from: playerToken, x: startX, y: startY, vx: proj.vx, vy: proj.vy, ammo: ammoType, id: proj.id }
       });
     }
   }
@@ -2065,10 +2081,16 @@
           setTimeout(() => hitEl.remove(), 600);
           me.el.classList.add('avatar-impact');
           setTimeout(() => me.el.classList.remove('avatar-impact'), 500);
+          // 受击变色
+          const eff = ITEM_EFFECTS[proj.ammoType];
+          if (eff && eff.cls) {
+            me.el.classList.add(eff.cls);
+            setTimeout(() => me.el.classList.remove(eff.cls), 1200);
+          }
           // 广播：我被打中了（带上击退速度，让攻击者也看到弹飞效果）
           gameChannel.send({
             type: 'broadcast', event: 'arena_self_hit',
-            payload: { from: proj.ownerToken, to: playerToken, ammo: proj.ammoType, hp: me.hp, x: me.x, y: me.y, vx: proj.vx, vy: proj.vy }
+            payload: { from: proj.ownerToken, to: playerToken, ammo: proj.ammoType, hp: me.hp, x: me.x, y: me.y, vx: proj.vx, vy: proj.vy, pid: proj.id }
           });
           // 淘汰判定
           if (me.hp <= 0) {
