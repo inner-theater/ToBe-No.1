@@ -184,7 +184,7 @@
     if (name === 'waiting') waitingView.classList.add('active');
     if (name === 'game')    gameView.classList.add('active');
     if (name === 'result')  resultView.classList.add('active');
-    if (name === 'arena')   arenaView.classList.add('active');
+    if (name === 'arena')   { arenaView.classList.add('active'); fitArenaStage(); }
   }
 
   // ===================== 个人资料 =====================
@@ -1721,6 +1721,7 @@
         updateArenaHpDisplay(playerToken);
         // 广播 HP 更新
         gameChannel.send({ type: 'broadcast', event: 'arena_hp_update', payload: { token: playerToken, hp: me.hp } });
+        saveArenaGameState();
         if (me.hp <= 0) {
           const assistCutoff = Date.now() - 10000;
           const assistants = [...new Set(
@@ -1737,7 +1738,7 @@
       .on('broadcast', { event: 'arena_hp_update' }, payload => {
         if (payload.payload.token === playerToken) return;
         const p = arenaPlayers[payload.payload.token];
-        if (p) { p.hp = payload.payload.hp; updateArenaHpDisplay(payload.payload.token); }
+        if (p) { p.hp = payload.payload.hp; updateArenaHpDisplay(payload.payload.token); saveArenaGameState(); }
       })
       .on('broadcast', { event: 'arena_eliminated' }, payload => {
         const d = payload.payload;
@@ -1783,6 +1784,7 @@
         // 2. 同步血量
         target.hp = typeof d.hp === 'number' ? d.hp : Math.max(0, (target.hp || 15) - 1);
         updateArenaHpDisplay(d.to);
+        saveArenaGameState();
         // 3. 攻击者端同步击退（设置 targetVx/targetVy 让远程玩家物理生效）
         if (d.from === playerToken && d.vx && d.vy) {
           const pushForce = 4;
@@ -1821,7 +1823,42 @@
   }
 
   // ===================== 大乱斗 (Arena) =====================
-  async function enterArenaPhase(players, duration) {
+  const ARENA_VIRT_W = 800;
+  const ARENA_VIRT_H = 600;
+
+  function fitArenaStage() {
+    const wrapper = arenaStage.parentElement;
+    if (!wrapper) return;
+    const scale = Math.min(
+      wrapper.clientWidth / ARENA_VIRT_W,
+      wrapper.clientHeight / ARENA_VIRT_H,
+      1.5 // 最大放大到1.5倍，避免大屏上元素过大
+    );
+    arenaStage.style.transform = `scale(${scale})`;
+  }
+
+  function saveArenaGameState() {
+    if (!arenaGameActive) return;
+    const playerStates = {};
+    Object.entries(arenaPlayers).forEach(([token, p]) => {
+      playerStates[token] = {
+        hp: p.hp,
+        kills: p.kills,
+        assists: p.assists,
+        alive: p.alive,
+        eliminatedAt: p.eliminatedAt,
+        survivalTime: p.survivalTime,
+        hitHistory: p.hitHistory || []
+      };
+    });
+    const existing = JSON.parse(localStorage.getItem('active_game_data') || '{}');
+    localStorage.setItem('active_game_data', JSON.stringify({
+      ...existing,
+      playerStates
+    }));
+  }
+
+  async function enterArenaPhase(players, duration, savedStates) {
     stopAllIntervals();
     gameResults.clear();
     switchView('arena');
@@ -1841,7 +1878,8 @@
     localStorage.setItem('active_game_data', JSON.stringify({
       duration: duration,
       startTime: Date.now(),
-      players: players.map(p => ({ player_token: p.player_token, name: p.name }))
+      players: players.map(p => ({ player_token: p.player_token, name: p.name })),
+      playerStates: savedStates || {}
     }));
 
     // 获取所有玩家头像（从users表批量查询）
@@ -1863,6 +1901,7 @@
     const avatarSize = 52;
 
     players.forEach((p, i) => {
+      const st = (savedStates && savedStates[p.player_token]) || {};
       const angle = (i / players.length) * Math.PI * 2;
       const radius = Math.min(stageW, stageH) * 0.28;
       const cx = stageW / 2 - avatarSize / 2;
@@ -1876,27 +1915,34 @@
       const div = document.createElement('div');
       div.className = 'arena-avatar';
       div.dataset.token = p.player_token;
+      const initHp = typeof st.hp === 'number' ? st.hp : 15;
       div.innerHTML = `
-        <div class="arena-hp-bar"><div class="arena-hp-fill" style="width:100%"></div></div>
+        <div class="arena-hp-bar"><div class="arena-hp-fill" style="width:${(initHp/15*100)}%"></div></div>
         <div class="arena-avatar-circle">${avatar ? `<img src="${avatar}">` : ''}</div>
         <span class="arena-avatar-nick">${escapeHTML(p.name)}</span>
-        <span class="arena-hp-text">15</span>
+        <span class="arena-hp-text">${initHp}</span>
       `;
       if (p.player_token === playerToken) {
         div.classList.add('arena-self');
+      }
+      if (st.alive === false) {
+        div.classList.add('arena-eliminated');
       }
       arenaStage.appendChild(div);
 
       arenaPlayers[p.player_token] = {
         el: div, x, y, vx: 0, vy: 0,
-        hp: 15, kills: 0, assists: 0,
-        alive: true, eliminatedAt: null,
+        hp: initHp,
+        kills: st.kills || 0,
+        assists: st.assists || 0,
+        alive: st.alive !== false,
+        eliminatedAt: st.eliminatedAt || null,
         nickname: p.name, avatar: avatar,
         targetX: x, targetY: y,
         targetVx: 0, targetVy: 0,
         lastPosTime: Date.now(),
         lastHitBy: null, lastHitTime: 0,
-        hitHistory: [], survivalTime: 0
+        hitHistory: st.hitHistory || [], survivalTime: st.survivalTime || 0
       };
     });
 
@@ -2135,6 +2181,7 @@
             type: 'broadcast', event: 'arena_self_hit',
             payload: { from: proj.ownerToken, to: playerToken, ammo: proj.ammoType, hp: me.hp, x: me.x, y: me.y, vx: proj.vx, vy: proj.vy, pid: proj.id }
           });
+          saveArenaGameState();
           if (me.hp <= 0) {
             const assistCutoff = Date.now() - 10000;
             const assistants = [...new Set(
@@ -2191,6 +2238,7 @@
                 type: 'broadcast', event: 'arena_self_hit',
                 payload: { from: playerToken, to: t, ammo: proj.ammoType, hp: target.hp, x: target.x, y: target.y, vx: proj.vx, vy: proj.vy, pid: proj.id }
               });
+              saveArenaGameState();
               if (target.hp <= 0) {
                 gameChannel.send({
                   type: 'broadcast', event: 'arena_eliminated',
@@ -2467,6 +2515,7 @@
       arenaMoveDir = { x: 0, y: 0 };
     }
     const aliveCount = Object.values(arenaPlayers).filter(p => p.alive).length;
+    saveArenaGameState();
     if (aliveCount <= 1) {
       setTimeout(endArenaGame, 1500);
     }
@@ -2673,7 +2722,7 @@
       gameChannel.send({ type: 'broadcast', event: 'arena_reconnect', payload: { token: playerToken } });
     }
 
-    await enterArenaPhase(players, remaining);
+    await enterArenaPhase(players, remaining, savedGameData.playerStates || {});
     showToast('已重连回大乱斗！');
   }
 
@@ -2752,6 +2801,11 @@
   }
 
   init();
+
+  // 窗口大小变化时重新适配竞技场尺寸
+  window.addEventListener('resize', () => {
+    if (arenaView.classList.contains('active')) fitArenaStage();
+  });
 
   // 可靠退出：sendBeacon 确保关闭网页也能发送离线信号
   function markOffline() {
