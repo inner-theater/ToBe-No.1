@@ -1900,8 +1900,8 @@
     const myAvatar = (myProfile && myProfile.avatar_b64) ? myProfile.avatar_b64 : '';
     avatarMap[playerToken] = myAvatar;
 
-    const stageW = arenaStage.clientWidth || 400;
-    const stageH = arenaStage.clientHeight || 400;
+    const stageW = ARENA_VIRT_W;
+    const stageH = ARENA_VIRT_H;
     const avatarSize = 52;
 
     players.forEach((p, i) => {
@@ -1965,8 +1965,8 @@
       if (!arenaGameActive) return;
       const dt = Math.min((now - lastTime) / 16, 3);
       lastTime = now;
-      const stageW = arenaStage.clientWidth || 400;
-      const stageH = arenaStage.clientHeight || 400;
+      const stageW = ARENA_VIRT_W;
+      const stageH = ARENA_VIRT_H;
       const avatarSize = 52;
       const moveSpeed = 2.8;
       const bounce = 0.65;
@@ -2113,8 +2113,8 @@
 
   function updateArenaProjectiles(dt) {
     dt = dt || 1;
-    const stageW = arenaStage.clientWidth || 400;
-    const stageH = arenaStage.clientHeight || 400;
+    const stageW = ARENA_VIRT_W;
+    const stageH = ARENA_VIRT_H;
     const avatarSize = 52;
     const now = Date.now();
 
