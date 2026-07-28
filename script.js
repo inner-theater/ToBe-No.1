@@ -286,13 +286,13 @@
       return;
     }
 
-    // 创建新用户
-    const { error } = await supabase.from('users').insert({
+    // 创建新用户（upsert 避免同一 token 冲突）
+    const { error } = await supabase.from('users').upsert({
       nickname: nick, avatar_b64: avatarBase64,
       player_token: playerToken, is_online: true,
       last_seen: new Date().toISOString()
-    });
-    if (error) { showToast('创建失败'); profileSaveBtn.disabled = false; profileSaveBtn.textContent = '进入大厅'; return; }
+    }, { onConflict: 'player_token' });
+    if (error) { showToast('创建失败'); console.error('创建用户失败', error); profileSaveBtn.disabled = false; profileSaveBtn.textContent = '进入大厅'; return; }
 
     myProfile = { nickname: nick, avatar_b64: avatarBase64 };
     localStorage.setItem('profile_nickname', nick);
@@ -766,6 +766,7 @@
   }
 
   async function fetchWaitingPlayers() {
+    if (!roomId) return;
     const { data: members } = await supabase.from('room_members').select('*').eq('room_id', roomId);
     const tokens = (members || []).map(m => m.user_token);
     const { data: users } = await supabase.from('users').select('*').in('player_token', tokens);
@@ -1217,6 +1218,7 @@
 
   // 房主离开后顺延下一位
   async function promoteNextOwner() {
+    if (!roomId) return;
     const { data: members } = await supabase.from('room_members').select('*').eq('room_id', roomId).order('joined_at', { ascending: true });
     if (!members || members.length === 0) return;
     const newOwner = members[0];
@@ -1370,14 +1372,14 @@
     const now = Date.now();
     if (now - lastItemTime < ITEM_COOLDOWN) { showToast('冷却中...'); return; }
     lastItemTime = now;
-    // 广播（用 lobbyChannel 或 gameChannel 都行）
-    const ch = lobbyChannel || gameChannel;
+    // 在房间用 gameChannel，在大厅用 lobbyChannel（不能混用，否则对方收不到）
+    const ch = currentRoom ? gameChannel : lobbyChannel;
     if (ch) ch.send({ type: 'broadcast', event: 'item_thrown', payload: { from_token: playerToken, to_token: target.player_token, item_type: itemType } });
-    // 如果在大厅，用 lobbyStage 飞行动画；否则用房间内卡片位置
-    if (document.querySelector('.lobby-stage') && physicsUsers[playerToken] && physicsUsers[target.player_token]) {
-      animateItemFly(playerToken, target.player_token, itemType);
-    } else if (document.querySelector('.member-card')) {
+    // 本地播放动画
+    if (currentRoom && document.querySelector('.member-card')) {
       roomAnimateItemFly(playerToken, target.player_token, itemType);
+    } else if (document.querySelector('.lobby-stage') && physicsUsers[playerToken] && physicsUsers[target.player_token]) {
+      animateItemFly(playerToken, target.player_token, itemType);
     }
   }
 
@@ -2599,11 +2601,11 @@
         localStorage.setItem('player_token', playerToken);
         myProfile.avatar_b64 = dbUser[0].avatar_b64 || savedAvatar || '';
       } else {
-        // 新设备第一次：用当前 token 创建记录
-        await supabase.from('users').insert({
+        // 新设备第一次：用当前 token upsert 记录（避免 player_token 冲突）
+        await supabase.from('users').upsert({
           nickname: savedNick, avatar_b64: savedAvatar || '',
           player_token: playerToken, is_online: true, last_seen: new Date().toISOString()
-        });
+        }, { onConflict: 'player_token' });
       }
       // 检查是否有未退出的房间
       const savedRoomId = localStorage.getItem('active_room_id');
