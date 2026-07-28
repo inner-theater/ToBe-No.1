@@ -1690,6 +1690,7 @@
           target.targetY = p.y;
           target.targetVx = p.vx || 0;
           target.targetVy = p.vy || 0;
+          target.lastPosTime = Date.now();
           // 同步血量（位置广播每100ms一次，保证围观者实时看到）
           if (typeof p.hp === 'number') {
             target.hp = p.hp;
@@ -1892,7 +1893,8 @@
         alive: true, eliminatedAt: null,
         nickname: p.name, avatar: avatar,
         targetX: x, targetY: y,
-        targetVx: 0, targetVy: 0,  // 远程玩家速度目标
+        targetVx: 0, targetVy: 0,
+        lastPosTime: Date.now(),
         lastHitBy: null, lastHitTime: 0,
         hitHistory: [], survivalTime: 0
       };
@@ -2095,25 +2097,26 @@
         removeProjectile(i); continue;
       }
 
-      // 碰撞检测：只检测是否命中本地玩家（被打者自己决定，100%准确）
+      // 碰撞检测
       const me = arenaPlayers[playerToken];
+      let hitSomething = false;
+
+      // A) 检测是否命中本地玩家（被打者自己决定扣血，100%准确）
       if (me && me.alive && proj.ownerToken !== playerToken) {
         const cx = me.x + avatarSize/2, cy = me.y + avatarSize/2;
         const dx = proj.x - cx, dy = proj.y - cy;
         const dist = Math.sqrt(dx*dx + dy*dy);
-        if (dist < 28) { // 命中本地玩家
+        if (dist < 28) {
+          hitSomething = true;
           removeProjectile(i);
-          // ===== 击退：被弹射物命中后顺着弹道方向弹飞 =====
           const pushForce = 4;
           me.vx = proj.vx * pushForce;
           me.vy = proj.vy * pushForce;
-          // 弹飞后墙壁反弹
           me.hp = Math.max(0, me.hp - 1);
           me.lastHitBy = proj.ownerToken;
           me.lastHitTime = Date.now();
           me.hitHistory.push({ attacker: proj.ownerToken, time: Date.now() });
           updateArenaHpDisplay(playerToken);
-          // 本地命中特效
           const hitEl = document.createElement('span');
           hitEl.className = 'hit-effect';
           hitEl.textContent = ITEM_EFFECTS[proj.ammoType] ? ITEM_EFFECTS[proj.ammoType].emoji : '💥';
@@ -2123,18 +2126,15 @@
           setTimeout(() => hitEl.remove(), 600);
           me.el.classList.add('avatar-impact');
           setTimeout(() => me.el.classList.remove('avatar-impact'), 500);
-          // 受击变色
           const eff = ITEM_EFFECTS[proj.ammoType];
           if (eff && eff.cls) {
             me.el.classList.add(eff.cls);
             setTimeout(() => me.el.classList.remove(eff.cls), 1200);
           }
-          // 广播：我被打中了（带上击退速度，让攻击者也看到弹飞效果）
           gameChannel.send({
             type: 'broadcast', event: 'arena_self_hit',
             payload: { from: proj.ownerToken, to: playerToken, ammo: proj.ammoType, hp: me.hp, x: me.x, y: me.y, vx: proj.vx, vy: proj.vy, pid: proj.id }
           });
-          // 淘汰判定
           if (me.hp <= 0) {
             const assistCutoff = Date.now() - 10000;
             const assistants = [...new Set(
@@ -2147,11 +2147,64 @@
             });
             arenaEliminatePlayer(playerToken, proj.ownerToken, assistants);
           }
-        } else {
-          proj.el.style.left = proj.x + 'px';
-          proj.el.style.top = proj.y + 'px';
         }
-      } else {
+      }
+
+      // B) 攻击者端：检测自己的弹丸是否打到别人（视觉同步 + 掉线兜底扣血）
+      if (!hitSomething && proj.ownerToken === playerToken) {
+        const tokens = Object.keys(arenaPlayers);
+        for (const t of tokens) {
+          if (t === playerToken) continue;
+          const target = arenaPlayers[t];
+          if (!target || !target.alive) continue;
+          const cx = target.x + avatarSize/2, cy = target.y + avatarSize/2;
+          const dx = proj.x - cx, dy = proj.y - cy;
+          const dist = Math.sqrt(dx*dx + dy*dy);
+          if (dist < 28) {
+            hitSomething = true;
+            removeProjectile(i);
+            // 播放命中特效（攻击者视角同步）
+            const hitEl = document.createElement('span');
+            hitEl.className = 'hit-effect';
+            hitEl.textContent = ITEM_EFFECTS[proj.ammoType] ? ITEM_EFFECTS[proj.ammoType].emoji : '💥';
+            hitEl.style.left = (target.x + 26) + 'px';
+            hitEl.style.top = (target.y + 26) + 'px';
+            arenaStage.appendChild(hitEl);
+            setTimeout(() => hitEl.remove(), 600);
+            target.el.classList.add('avatar-impact');
+            setTimeout(() => target.el.classList.remove('avatar-impact'), 500);
+            const eff = ITEM_EFFECTS[proj.ammoType];
+            if (eff && eff.cls) {
+              target.el.classList.add(eff.cls);
+              setTimeout(() => target.el.classList.remove(eff.cls), 1200);
+            }
+            // 掉线兜底：如果对方超过 3 秒没发位置广播，攻击者端主动扣血
+            const lastPos = target.lastPosTime || 0;
+            if (Date.now() - lastPos > 3000) {
+              target.hp = Math.max(0, target.hp - 1);
+              updateArenaHpDisplay(t);
+              target.vx = proj.vx * 4;
+              target.vy = proj.vy * 4;
+              target.targetVx = target.vx;
+              target.targetVy = target.vy;
+              gameChannel.send({
+                type: 'broadcast', event: 'arena_self_hit',
+                payload: { from: playerToken, to: t, ammo: proj.ammoType, hp: target.hp, x: target.x, y: target.y, vx: proj.vx, vy: proj.vy, pid: proj.id }
+              });
+              if (target.hp <= 0) {
+                gameChannel.send({
+                  type: 'broadcast', event: 'arena_eliminated',
+                  payload: { token: t, killed_by: playerToken, assistants: [], time: Date.now() }
+                });
+                arenaEliminatePlayer(t, playerToken, []);
+              }
+            }
+            break;
+          }
+        }
+      }
+
+      if (!hitSomething) {
         proj.el.style.left = proj.x + 'px';
         proj.el.style.top = proj.y + 'px';
       }
