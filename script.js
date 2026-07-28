@@ -1770,8 +1770,8 @@
         const el = document.createElement('span');
         el.className = 'arena-projectile';
         el.textContent = ITEM_EFFECTS[d.ammo] ? ITEM_EFFECTS[d.ammo].emoji : '🍅';
-        el.style.left = d.x + 'px';
-        el.style.top = d.y + 'px';
+        el.style.left = toScreenX(d.x) + 'px';
+        el.style.top = toScreenY(d.y) + 'px';
         arenaStage.appendChild(el);
         proj.el = el;
         arenaProjectiles.push(proj);
@@ -1802,8 +1802,8 @@
         hitEl.className = 'hit-effect';
         const eff = ITEM_EFFECTS[d.ammo];
         hitEl.textContent = eff ? eff.emoji : '💥';
-        hitEl.style.left = (d.x || 0) + 'px';
-        hitEl.style.top = (d.y || 0) + 'px';
+        hitEl.style.left = toScreenX(d.x || 0) + 'px';
+        hitEl.style.top = toScreenY(d.y || 0) + 'px';
         arenaStage.appendChild(hitEl);
         setTimeout(() => hitEl.remove(), 600);
         target.el.classList.add('avatar-impact');
@@ -1829,17 +1829,18 @@
   // ===================== 大乱斗 (Arena) =====================
   const ARENA_VIRT_W = 645;
   const ARENA_VIRT_H = 900;
+  let arenaScaleX = 1;
+  let arenaScaleY = 1;
 
   function fitArenaStage() {
-    const wrapper = arenaStage.parentElement;
-    if (!wrapper) return;
-    const scale = Math.min(
-      wrapper.clientWidth / ARENA_VIRT_W,
-      wrapper.clientHeight / ARENA_VIRT_H,
-      1.5 // 最大放大到1.5倍，避免大屏上元素过大
-    );
-    arenaStage.style.transform = `scale(${scale})`;
+    const w = arenaStage.clientWidth || ARENA_VIRT_W;
+    const h = arenaStage.clientHeight || ARENA_VIRT_H;
+    arenaScaleX = w / ARENA_VIRT_W;
+    arenaScaleY = h / ARENA_VIRT_H;
   }
+
+  function toScreenX(vx) { return vx * arenaScaleX; }
+  function toScreenY(vy) { return vy * arenaScaleY; }
 
   function saveArenaGameState() {
     if (!arenaGameActive) return;
@@ -1932,6 +1933,8 @@
       if (st.alive === false) {
         div.classList.add('arena-eliminated');
       }
+      div.style.left = toScreenX(x) + 'px';
+      div.style.top = toScreenY(y) + 'px';
       arenaStage.appendChild(div);
 
       arenaPlayers[p.player_token] = {
@@ -2039,8 +2042,8 @@
 
       for (const t of tokens) {
         const p = arenaPlayers[t];
-        p.el.style.left = p.x + 'px';
-        p.el.style.top = p.y + 'px';
+        p.el.style.left = toScreenX(p.x) + 'px';
+        p.el.style.top = toScreenY(p.y) + 'px';
       }
       arenaPhysicsRaf = requestAnimationFrame(tick);
     }
@@ -2096,8 +2099,8 @@
     const el = document.createElement('span');
     el.className = 'arena-projectile';
     el.textContent = ITEM_EFFECTS[ammoType] ? ITEM_EFFECTS[ammoType].emoji : '🍅';
-    el.style.left = startX + 'px';
-    el.style.top = startY + 'px';
+    el.style.left = toScreenX(startX) + 'px';
+    el.style.top = toScreenY(startY) + 'px';
     arenaStage.appendChild(el);
     proj.el = el;
     arenaProjectiles.push(proj);
@@ -2170,8 +2173,8 @@
           const hitEl = document.createElement('span');
           hitEl.className = 'hit-effect';
           hitEl.textContent = ITEM_EFFECTS[proj.ammoType] ? ITEM_EFFECTS[proj.ammoType].emoji : '💥';
-          hitEl.style.left = (me.x + 26) + 'px';
-          hitEl.style.top = (me.y + 26) + 'px';
+          hitEl.style.left = toScreenX(me.x + 26) + 'px';
+          hitEl.style.top = toScreenY(me.y + 26) + 'px';
           arenaStage.appendChild(hitEl);
           setTimeout(() => hitEl.remove(), 600);
           me.el.classList.add('avatar-impact');
@@ -2218,8 +2221,8 @@
             const hitEl = document.createElement('span');
             hitEl.className = 'hit-effect';
             hitEl.textContent = ITEM_EFFECTS[proj.ammoType] ? ITEM_EFFECTS[proj.ammoType].emoji : '💥';
-            hitEl.style.left = (target.x + 26) + 'px';
-            hitEl.style.top = (target.y + 26) + 'px';
+            hitEl.style.left = toScreenX(target.x + 26) + 'px';
+            hitEl.style.top = toScreenY(target.y + 26) + 'px';
             arenaStage.appendChild(hitEl);
             setTimeout(() => hitEl.remove(), 600);
             target.el.classList.add('avatar-impact');
@@ -2257,8 +2260,8 @@
       }
 
       if (!hitSomething) {
-        proj.el.style.left = proj.x + 'px';
-        proj.el.style.top = proj.y + 'px';
+        proj.el.style.left = toScreenX(proj.x) + 'px';
+        proj.el.style.top = toScreenY(proj.y) + 'px';
       }
     }
   }
@@ -2459,10 +2462,10 @@
       const elapsed = now - startTime;
       const t = Math.min(elapsed / duration, 1);
       const ease = 1 - Math.pow(1 - t, 3);
-      const sx = stageRect.left + fromP.x + 24;
-      const sy = stageRect.top + fromP.y + 24;
-      const tx = stageRect.left + toP.x + 24;
-      const ty = stageRect.top + toP.y + 24;
+      const sx = stageRect.left + toScreenX(fromP.x) + 24;
+      const sy = stageRect.top + toScreenY(fromP.y) + 24;
+      const tx = stageRect.left + toScreenX(toP.x) + 24;
+      const ty = stageRect.top + toScreenY(toP.y) + 24;
       const cx = sx + (tx - sx) * ease;
       const cy = sy + (ty - sy) * ease - Math.sin(t * Math.PI) * arcHeight;
       fly.style.left = cx + 'px';
@@ -2810,7 +2813,16 @@
 
   // 窗口大小变化时重新适配竞技场尺寸
   window.addEventListener('resize', () => {
-    if (arenaView.classList.contains('active')) fitArenaStage();
+    if (arenaView.classList.contains('active')) {
+      fitArenaStage();
+      // 重渲染所有玩家位置
+      Object.values(arenaPlayers).forEach(p => {
+        if (p.el) {
+          p.el.style.left = toScreenX(p.x) + 'px';
+          p.el.style.top = toScreenY(p.y) + 'px';
+        }
+      });
+    }
   });
 
   // 可靠退出：sendBeacon 确保关闭网页也能发送离线信号
