@@ -1827,8 +1827,8 @@
   }
 
   // ===================== 大乱斗 (Arena) =====================
-  const ARENA_VIRT_W = 800;
-  const ARENA_VIRT_H = 600;
+  const ARENA_VIRT_W = 645;
+  const ARENA_VIRT_H = 900;
 
   function fitArenaStage() {
     const wrapper = arenaStage.parentElement;
