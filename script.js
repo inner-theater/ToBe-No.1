@@ -771,6 +771,7 @@
     const { data: users } = await supabase.from('users').select('*').in('player_token', tokens);
     allPlayers = (users || []).map(u => ({
       id: u.id, name: u.nickname, player_token: u.player_token,
+      avatar_b64: u.avatar_b64 || '',
       click_count: 0, buff: '', final_score: 0, is_finished: false,
       is_owner: u.player_token === (currentRoom ? currentRoom.creator_token : ''),
       game_started: false
@@ -855,9 +856,7 @@
     playerListEl.innerHTML = allPlayers.map(p => {
       const isOwner = p.is_owner || p.player_token === (currentRoom ? currentRoom.creator_token : '');
       const isMe = p.player_token === playerToken;
-      // 从在线用户列表中找头像
-      const onlineUser = onlineUsers.find(u => u.player_token === p.player_token);
-      const avatar = onlineUser ? onlineUser.avatar_b64 : '';
+      const avatar = p.avatar_b64 || '';
       const avatarHtml = avatar ? `<img src="${avatar}">` : `<span class="avatar-placeholder">${isOwner ? '👑' : '👤'}</span>`;
       // 管理菜单（仅房主可见，且对自己不显示踢出）
       let manageHtml = '';
@@ -1365,9 +1364,70 @@
     const now = Date.now();
     if (now - lastItemTime < ITEM_COOLDOWN) { showToast('冷却中...'); return; }
     lastItemTime = now;
-    // Broadcast 广播（不存库）
-    lobbyChannel.send({ type: 'broadcast', event: 'item_thrown', payload: { from_token: playerToken, to_token: target.player_token, item_type: itemType } });
-    animateItemFly(playerToken, target.player_token, itemType);
+    // 广播（用 lobbyChannel 或 gameChannel 都行）
+    const ch = lobbyChannel || gameChannel;
+    if (ch) ch.send({ type: 'broadcast', event: 'item_thrown', payload: { from_token: playerToken, to_token: target.player_token, item_type: itemType } });
+    // 如果在大厅，用 lobbyStage 飞行动画；否则用房间内卡片位置
+    if (document.querySelector('.lobby-stage') && physicsUsers[playerToken] && physicsUsers[target.player_token]) {
+      animateItemFly(playerToken, target.player_token, itemType);
+    } else if (document.querySelector('.member-card')) {
+      roomAnimateItemFly(playerToken, target.player_token, itemType);
+    }
+  }
+
+  // 房间内道具飞行（基于成员卡片位置）
+  function roomAnimateItemFly(fromToken, toToken, itemType) {
+    const fromCard = document.querySelector(`.member-card[data-token="${fromToken}"]`);
+    const toCard = document.querySelector(`.member-card[data-token="${toToken}"]`);
+    if (!fromCard || !toCard) return;
+    const eff = ITEM_EFFECTS[itemType] || ITEM_EFFECTS.tomato;
+    const fromRect = fromCard.getBoundingClientRect();
+    const toRect = toCard.getBoundingClientRect();
+    const sx = fromRect.left + fromRect.width/2;
+    const sy = fromRect.top + fromRect.height/2;
+    const tx = toRect.left + toRect.width/2;
+    const ty = toRect.top + toRect.height/2;
+    const fly = document.createElement('span');
+    fly.className = 'item-fly';
+    fly.textContent = eff.emoji;
+    fly.style.position = 'fixed';
+    fly.style.left = sx + 'px';
+    fly.style.top = sy + 'px';
+    fly.style.fontSize = '1.8rem';
+    fly.style.pointerEvents = 'none';
+    fly.style.zIndex = '9999';
+    fly.style.transform = 'translate(-50%, -50%)';
+    document.body.appendChild(fly);
+    const startTime = performance.now();
+    const duration = 800;
+    const arcHeight = 80;
+    function frame(now) {
+      const t = Math.min((now - startTime) / duration, 1);
+      const ease = 1 - Math.pow(1 - t, 3);
+      const x = sx + (tx - sx) * ease;
+      const y = sy + (ty - sy) * ease - Math.sin(t * Math.PI) * arcHeight;
+      const scale = 1 + Math.sin(t * Math.PI) * 0.4;
+      fly.style.left = x + 'px';
+      fly.style.top = y + 'px';
+      fly.style.transform = `translate(-50%, -50%) scale(${scale})`;
+      if (t < 1) requestAnimationFrame(frame);
+      else {
+        fly.remove();
+        // 击中效果
+        const hit = document.createElement('span');
+        hit.className = 'hit-effect';
+        hit.textContent = eff.emoji;
+        hit.style.position = 'fixed';
+        hit.style.left = tx + 'px';
+        hit.style.top = ty + 'px';
+        hit.style.transform = 'translate(-50%, -50%)';
+        document.body.appendChild(hit);
+        setTimeout(() => hit.remove(), 600);
+        toCard.classList.add('avatar-impact');
+        setTimeout(() => toCard.classList.remove('avatar-impact'), 500);
+      }
+    }
+    requestAnimationFrame(frame);
   }
 
   // 道具效果映射：{ cssClass, pushStrength, duration }
@@ -1531,6 +1591,16 @@
       })
       .on('broadcast', { event: 'owner_changed' }, () => {
         fetchWaitingPlayers();
+      })
+      .on('broadcast', { event: 'item_thrown' }, payload => {
+        if (payload.payload.from_token !== playerToken) {
+          // 在等待室显示飞行动画
+          if (document.querySelector('.member-card')) {
+            roomAnimateItemFly(payload.payload.from_token, payload.payload.to_token, payload.payload.item_type);
+          } else {
+            animateItemFly(payload.payload.from_token, payload.payload.to_token, payload.payload.item_type);
+          }
+        }
       })
       .on('broadcast', { event: 'game_reset' }, () => {
         // 房主开启了新一轮，所有人回到等待室
