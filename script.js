@@ -298,6 +298,14 @@
     localStorage.setItem('profile_nickname', nick);
     localStorage.setItem('profile_avatar', avatarBase64);
     enterLobby();
+    // 新用户通过邀请链接进入，登录后自动加入房间
+    const joinParam = new URLSearchParams(window.location.search).get('join');
+    if (joinParam) {
+      setTimeout(() => joinRoom(joinParam), 800);
+      const url = new URL(window.location);
+      url.searchParams.delete('join');
+      window.history.replaceState({}, '', url);
+    }
   });
 
   // ===================== 大厅 =====================
