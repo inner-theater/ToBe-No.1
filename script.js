@@ -917,6 +917,7 @@
           await supabase.from('room_members').update({ is_owner: true }).eq('room_id', roomId).eq('user_token', targetToken);
           await supabase.from('rooms').update({ creator_token: targetToken }).eq('id', roomId);
           isRoomOwner = false;
+          currentRoom.creator_token = targetToken;
           localStorage.setItem('active_room_owner', '0');
           if (gameChannel) {
             gameChannel.send({ type: 'broadcast', event: 'owner_changed', payload: {} });
@@ -927,6 +928,11 @@
       });
     });
   }
+
+  // 点击空白处关闭管理菜单
+  document.addEventListener('click', () => {
+    document.querySelectorAll('.manage-menu').forEach(m => m.style.display = 'none');
+  });
 
   leaveRoomBtn.addEventListener('click', exitRoomToLobby);
 
@@ -1425,6 +1431,11 @@
         setTimeout(() => hit.remove(), 600);
         toCard.classList.add('avatar-impact');
         setTimeout(() => toCard.classList.remove('avatar-impact'), 500);
+        // 受击变色
+        if (eff.cls) {
+          toCard.classList.add(eff.cls);
+          setTimeout(() => toCard.classList.remove(eff.cls), 1200);
+        }
       }
     }
     requestAnimationFrame(frame);
