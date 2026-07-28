@@ -1789,13 +1789,16 @@
         target.hp = typeof d.hp === 'number' ? d.hp : Math.max(0, (target.hp || 15) - 1);
         updateArenaHpDisplay(d.to);
         saveArenaGameState();
-        // 3. 攻击者端同步击退（设置 targetVx/targetVy 让远程玩家物理生效）
-        if (d.from === playerToken && d.vx && d.vy) {
+        // 3. 所有客户端同步击退（攻击者、被打者、观众都生效）
+        if (d.vx && d.vy) {
           const pushForce = 4;
           target.vx = d.vx * pushForce;
           target.vy = d.vy * pushForce;
           target.targetVx = target.vx;
           target.targetVy = target.vy;
+          // 更新 targetX/Y 预估位置，防止漂移修正把玩家拉回旧位置抵消击退
+          target.targetX = (d.x || target.x) + d.vx * pushForce * 4;
+          target.targetY = (d.y || target.y) + d.vy * pushForce * 4;
         }
         // 4. 播放命中特效+变色
         const hitEl = document.createElement('span');
@@ -2241,6 +2244,8 @@
               target.vy = proj.vy * 4;
               target.targetVx = target.vx;
               target.targetVy = target.vy;
+              target.targetX = target.x + proj.vx * 4 * 4;
+              target.targetY = target.y + proj.vy * 4 * 4;
               gameChannel.send({
                 type: 'broadcast', event: 'arena_self_hit',
                 payload: { from: playerToken, to: t, ammo: proj.ammoType, hp: target.hp, x: target.x, y: target.y, vx: proj.vx, vy: proj.vy, pid: proj.id }
