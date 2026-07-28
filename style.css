@@ -227,6 +227,22 @@ body::before{
 .player-list{ display:flex; flex-wrap:wrap; gap:8px }
 .player-tag{ display:inline-flex; align-items:center; gap:6px; padding:8px 14px; background:var(--bg-card); border:1px solid var(--border-color); border-radius:24px; font-size:.9rem; font-weight:600; animation:tagPopIn .3s ease }
 .player-tag.owner-tag{ border-color:var(--neon-purple); box-shadow:0 0 10px rgba(168,85,247,.2) }
+/* 成员头像卡片 */
+.member-card{ display:flex; flex-direction:column; align-items:center; gap:4px; padding:10px 12px; background:var(--bg-card); border:1px solid var(--border-color); border-radius:12px; cursor:pointer; transition:var(--transition); min-width:80px; animation:tagPopIn .3s ease; position:relative }
+.member-card:hover{ border-color:var(--neon-purple); box-shadow:0 0 12px rgba(168,85,247,.25); transform:translateY(-2px) }
+.member-card.owner-card{ border-color:var(--gold); box-shadow:0 0 10px rgba(251,191,36,.15) }
+.member-avatar{ width:44px; height:44px; border-radius:50%; overflow:hidden; border:2px solid var(--border-color); background:var(--bg-input); display:flex; align-items:center; justify-content:center }
+.member-avatar img{ width:100%; height:100%; object-fit:cover }
+.member-avatar .avatar-placeholder{ font-size:1.2rem; color:var(--text-muted) }
+.member-name{ font-size:.75rem; font-weight:600; color:var(--text-primary); text-align:center; max-width:72px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.member-badge{ position:absolute; top:-6px; right:-6px; font-size:.85rem; line-height:1 }
+.member-manage{ position:absolute; top:-6px; left:-6px; font-size:.7rem; background:var(--bg-card); border:1px solid var(--border-color); border-radius:50%; width:20px; height:20px; display:flex; align-items:center; justify-content:center; cursor:pointer; opacity:0; transition:opacity .2s }
+.member-card:hover .member-manage{ opacity:1 }
+.member-manage:hover{ border-color:var(--red-glow); background:rgba(239,68,68,.15) }
+.manage-menu{ position:absolute; top:100%; left:0; background:var(--bg-card); border:1px solid var(--border-color); border-radius:8px; padding:4px 0; z-index:50; min-width:120px; box-shadow:0 8px 24px rgba(0,0,0,.4); display:none }
+.manage-menu-item{ padding:8px 14px; font-size:.78rem; cursor:pointer; white-space:nowrap; transition:background .15s }
+.manage-menu-item:hover{ background:rgba(168,85,247,.12); color:var(--neon-purple) }
+.manage-menu-item.danger:hover{ background:rgba(239,68,68,.12); color:var(--red-glow) }
 @keyframes tagPopIn{ from{transform:scale(.8);opacity:0} to{transform:scale(1);opacity:1} }
 .owner-actions{ text-align:center; margin-top:8px }
 .owner-hint{ margin-top:10px; font-size:.85rem; color:var(--text-muted) }

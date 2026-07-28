@@ -732,6 +732,26 @@
     if (isRoomOwner && mode === 'speed') { ownerActions.style.display = 'block'; propModeLabel.style.display = 'block'; }
     else if (isRoomOwner && mode === 'arena') { ownerActions.style.display = 'block'; propModeLabel.style.display = 'none'; }
     else { ownerActions.style.display = 'none'; propModeLabel.style.display = 'none'; }
+    // 房主显示邀请按钮
+    const inviteBtn = document.getElementById('invite-btn');
+    if (inviteBtn) {
+      inviteBtn.style.display = isRoomOwner ? 'inline-flex' : 'none';
+      inviteBtn.onclick = () => {
+        const url = `${window.location.origin}${window.location.pathname}?join=${room.id}`;
+        navigator.clipboard.writeText(url).then(() => {
+          showToast('邀请链接已复制！');
+        }).catch(() => {
+          // fallback
+          const input = document.createElement('input');
+          input.value = url;
+          document.body.appendChild(input);
+          input.select();
+          document.execCommand('copy');
+          input.remove();
+          showToast('邀请链接已复制！');
+        });
+      };
+    }
     replayBtn.style.display = 'none';
     // 重置开始按钮状态
     startBtn.disabled = false;
@@ -829,12 +849,84 @@
       lastPlayerNames = '';
       return;
     }
-    const names = allPlayers.map(p => p.name).sort().join(',');
+    const names = allPlayers.map(p => p.name + p.player_token).join(',');
     if (names === lastPlayerNames) return;
     lastPlayerNames = names;
-    playerListEl.innerHTML = allPlayers.map(p =>
-      `<span class="player-tag${p.is_owner ? ' owner-tag' : ''}">${p.is_owner ? '👑 ' : ''}${escapeHTML(p.name)}</span>`
-    ).join('');
+    playerListEl.innerHTML = allPlayers.map(p => {
+      const isOwner = p.is_owner || p.player_token === (currentRoom ? currentRoom.creator_token : '');
+      const isMe = p.player_token === playerToken;
+      // 从在线用户列表中找头像
+      const onlineUser = onlineUsers.find(u => u.player_token === p.player_token);
+      const avatar = onlineUser ? onlineUser.avatar_b64 : '';
+      const avatarHtml = avatar ? `<img src="${avatar}">` : `<span class="avatar-placeholder">${isOwner ? '👑' : '👤'}</span>`;
+      // 管理菜单（仅房主可见，且对自己不显示踢出）
+      let manageHtml = '';
+      if (isRoomOwner && !isMe) {
+        manageHtml = `<div class="member-manage" data-token="${p.player_token}" title="管理">⚙</div>
+          <div class="manage-menu" id="manage-${p.player_token.replace(/[^a-zA-Z0-9]/g,'')}">
+            <div class="manage-menu-item" data-action="transfer" data-token="${p.player_token}">👑 转让房主</div>
+            <div class="manage-menu-item danger" data-action="kick" data-token="${p.player_token}">🚫 踢出</div>
+          </div>`;
+      }
+      return `<div class="member-card${isOwner ? ' owner-card' : ''}" data-token="${p.player_token}">
+        ${manageHtml}
+        ${isOwner ? '<span class="member-badge">👑</span>' : ''}
+        <div class="member-avatar">${avatarHtml}</div>
+        <span class="member-name">${escapeHTML(p.name)}${isMe ? ' (我)' : ''}</span>
+      </div>`;
+    }).join('');
+
+    // 点击头像 → 扔道具（房主管理菜单阻止冒泡）
+    playerListEl.querySelectorAll('.member-card').forEach(card => {
+      const token = card.dataset.token;
+      if (token === playerToken) return; // 不能对自己扔
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('.member-manage') || e.target.closest('.manage-menu')) return;
+        const target = allPlayers.find(p => p.player_token === token);
+        if (target) openItemPopup(target);
+      });
+    });
+
+    // 管理菜单按钮
+    playerListEl.querySelectorAll('.member-manage').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const menu = btn.nextElementSibling;
+        const isVisible = menu.style.display === 'block';
+        // 关闭其他菜单
+        playerListEl.querySelectorAll('.manage-menu').forEach(m => m.style.display = 'none');
+        menu.style.display = isVisible ? 'none' : 'block';
+      });
+    });
+
+    // 管理操作
+    playerListEl.querySelectorAll('.manage-menu-item').forEach(item => {
+      item.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const action = item.dataset.action;
+        const targetToken = item.dataset.token;
+        const menu = item.closest('.manage-menu');
+        if (menu) menu.style.display = 'none';
+        if (action === 'kick') {
+          if (!confirm('确定要踢出该成员吗？')) return;
+          await supabase.from('room_members').delete().eq('room_id', roomId).eq('user_token', targetToken);
+          showToast('已踢出');
+          fetchWaitingPlayers();
+        } else if (action === 'transfer') {
+          if (!confirm('确定要转让房主吗？')) return;
+          await supabase.from('room_members').update({ is_owner: false }).eq('room_id', roomId).eq('user_token', playerToken);
+          await supabase.from('room_members').update({ is_owner: true }).eq('room_id', roomId).eq('user_token', targetToken);
+          await supabase.from('rooms').update({ creator_token: targetToken }).eq('id', roomId);
+          isRoomOwner = false;
+          localStorage.setItem('active_room_owner', '0');
+          if (gameChannel) {
+            gameChannel.send({ type: 'broadcast', event: 'owner_changed', payload: {} });
+          }
+          showToast('已转让房主');
+          fetchWaitingPlayers();
+        }
+      });
+    });
   }
 
   leaveRoomBtn.addEventListener('click', exitRoomToLobby);
@@ -2434,6 +2526,16 @@
       }
       // 没有活跃房间 → 正常进大厅
       enterLobby();
+      // 检测邀请链接 ?join=roomId
+      const joinParam = new URLSearchParams(window.location.search).get('join');
+      if (joinParam) {
+        // 等待大厅加载，然后加入房间
+        setTimeout(() => joinRoom(joinParam), 800);
+        // 清除URL参数，防止刷新后重复加入
+        const url = new URL(window.location);
+        url.searchParams.delete('join');
+        window.history.replaceState({}, '', url);
+      }
     } else {
       switchView('profile');
     }

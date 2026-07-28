@@ -96,6 +96,9 @@
       <header class="header">
         <h1 class="title neon-text" id="waiting-room-title">对战场</h1>
         <p class="subtitle" id="room-subtitle">等待房主开始...</p>
+        <div style="display:flex;gap:8px;justify-content:center;margin-top:8px">
+          <button id="invite-btn" class="btn btn-secondary btn-small" style="display:none">📨 邀请</button>
+        </div>
       </header>
       <div class="player-list-section">
         <h2 class="section-title"><span class="icon">⚔️</span> 参赛名单 <span id="player-count" class="count-badge">0</span></h2>
@@ -108,8 +111,10 @@
         <button id="start-btn" class="btn btn-primary btn-large glow-btn-pulse">全军出击</button>
         <p class="owner-hint">你是房主，准备好就可以开始！</p>
       </div>
-      <button id="leave-room-btn" class="btn btn-secondary btn-small" style="margin-top:12px">退出房间</button>
-      <button id="replay-btn" class="btn btn-primary btn-small" style="display:none;margin-top:12px">再来一局</button>
+      <div style="display:flex;gap:8px;justify-content:center;margin-top:12px">
+        <button id="leave-room-btn" class="btn btn-secondary btn-small">退出房间</button>
+        <button id="replay-btn" class="btn btn-primary btn-small" style="display:none">再来一局</button>
+      </div>
     </div>
   </div>
 
