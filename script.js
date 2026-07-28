@@ -286,12 +286,16 @@
       return;
     }
 
-    // 创建新用户（upsert 避免同一 token 冲突）
-    const { error } = await supabase.from('users').upsert({
+    // 新用户 → 生成新的 playerToken，避免覆盖之前同一设备的老用户
+    playerToken = generateUUID();
+    localStorage.setItem('player_token', playerToken);
+
+    // 创建新用户
+    const { error } = await supabase.from('users').insert({
       nickname: nick, avatar_b64: avatarBase64,
       player_token: playerToken, is_online: true,
       last_seen: new Date().toISOString()
-    }, { onConflict: 'player_token' });
+    });
     if (error) { showToast('创建失败'); console.error('创建用户失败', error); profileSaveBtn.disabled = false; profileSaveBtn.textContent = '进入大厅'; return; }
 
     myProfile = { nickname: nick, avatar_b64: avatarBase64 };
@@ -2743,11 +2747,13 @@
         localStorage.setItem('player_token', playerToken);
         myProfile.avatar_b64 = dbUser[0].avatar_b64 || savedAvatar || '';
       } else {
-        // 新设备第一次：用当前 token upsert 记录（避免 player_token 冲突）
-        await supabase.from('users').upsert({
+        // DB 中无此昵称 → 生成新 token 重新创建记录（避免覆盖其他用户的 token）
+        playerToken = generateUUID();
+        localStorage.setItem('player_token', playerToken);
+        await supabase.from('users').insert({
           nickname: savedNick, avatar_b64: savedAvatar || '',
           player_token: playerToken, is_online: true, last_seen: new Date().toISOString()
-        }, { onConflict: 'player_token' });
+        });
       }
       // 检查是否有未退出的房间
       const savedRoomId = localStorage.getItem('active_room_id');
