@@ -775,35 +775,55 @@
 
   async function fetchWaitingPlayers() {
     if (!roomId) return;
+    // 1. 先拿最新房间信息（确保 creator_token 是最新的）
+    const { data: room } = await supabase.from('rooms').select('*').eq('id', roomId).single();
+    if (room) currentRoom = room;
+
     const { data: members } = await supabase.from('room_members').select('*').eq('room_id', roomId);
     const tokens = (members || []).map(m => m.user_token);
+
+    // 2. 检测自己是否被踢出 → 自动回大厅
+    if (tokens.length > 0 && !tokens.includes(playerToken)) {
+      showToast('你已被移出房间');
+      currentRoom = null; isRoomOwner = false; roomId = null; allPlayers = [];
+      localStorage.removeItem('active_room_id');
+      localStorage.removeItem('active_room_name');
+      localStorage.removeItem('active_room_owner');
+      enterLobby();
+      return;
+    }
+
     const { data: users } = await supabase.from('users').select('*').in('player_token', tokens);
+
+    // 3. 先根据 DB 查询结果确定正确的 isRoomOwner
+    const myMember = (members || []).find(m => m.user_token === playerToken);
+    const dbOwnerToken = room ? room.creator_token : '';
+    const myIsOwner = !!(myMember && myMember.is_owner);
+
+    if (myIsOwner !== isRoomOwner) {
+      isRoomOwner = myIsOwner;
+      localStorage.setItem('active_room_owner', isRoomOwner ? '1' : '0');
+      roomSubtitle.textContent = isRoomOwner ? '你是房主，等人齐就能开始！' : '等待房主开始...';
+    }
+
+    // 4. 用 DB 中的 is_owner 字段决定每个玩家的 is_owner（不再依赖可能过时的 currentRoom.creator_token）
+    const ownerTokens = new Set((members || []).filter(m => m.is_owner).map(m => m.user_token));
     allPlayers = (users || []).map(u => ({
       id: u.id, name: u.nickname, player_token: u.player_token,
       avatar_b64: u.avatar_b64 || '',
       click_count: 0, buff: '', final_score: 0, is_finished: false,
-      is_owner: u.player_token === (currentRoom ? currentRoom.creator_token : ''),
+      is_owner: ownerTokens.has(u.player_token),
       game_started: false
     }));
-    // 检测房主是否已切换到自己
-    const myMember = (members || []).find(m => m.user_token === playerToken);
-    if (myMember && myMember.is_owner && !isRoomOwner) {
-      isRoomOwner = true;
-      currentRoom.creator_token = playerToken;
-      localStorage.setItem('active_room_owner', '1');
-      roomSubtitle.textContent = '你是房主，等人齐就能开始！';
-    }
 
-    // 如果房间没有人是 owner（比如房主关网页了），第一个成员自动晋升
+    // 5. 如果房间没有人是 owner（比如房主关网页了），第一个成员自动晋升
     const hasOwner = (members || []).some(m => m.is_owner);
     if (!hasOwner && (members || []).length > 0) {
-      const first = members[0]; // 已按 joined_at 排序
-      // 只有第一个成员的客户端执行晋升，避免多人同时操作
+      const first = members[0];
       if (first.user_token === playerToken) {
         await supabase.from('room_members').update({ is_owner: true }).eq('id', first.id);
         await supabase.from('rooms').update({ creator_token: first.user_token }).eq('id', roomId);
         isRoomOwner = true;
-        currentRoom.creator_token = playerToken;
         localStorage.setItem('active_room_owner', '1');
         roomSubtitle.textContent = '你是房主，等人齐就能开始！';
         if (gameChannel) {
@@ -811,17 +831,16 @@
         }
       }
     }
-    // 清理离线超过 60 秒的成员
+
+    // 6. 清理离线超过 60 秒的成员
     const cutoff = new Date(Date.now() - 60000).toISOString();
     const offlineTokens = (users || []).filter(u =>
       u.player_token !== playerToken && !u.is_online && u.last_seen < cutoff
     ).map(u => u.player_token);
     if (offlineTokens.length > 0) {
       await supabase.from('room_members').delete().eq('room_id', roomId).in('user_token', offlineTokens);
-      // 检查房间是否还有人
       const { count: remain } = await supabase.from('room_members').select('*', { count: 'exact', head: true }).eq('room_id', roomId);
       if (!remain || remain === 0) {
-        // 房间空了，解散
         await supabase.from('rooms').delete().eq('id', roomId);
         currentRoom = null; isRoomOwner = false; roomId = null; allPlayers = [];
         localStorage.removeItem('active_room_id');
@@ -830,11 +849,8 @@
         enterLobby();
         return;
       }
-      // 如果被移除的是 owner，触发晋升
-      const stillHasOwner = await supabase.from('room_members').select('id').eq('room_id', roomId).eq('is_owner', true).limit(1);
-      const { data: still } = stillHasOwner;
+      const { data: still } = await supabase.from('room_members').select('id').eq('room_id', roomId).eq('is_owner', true).limit(1);
       if (!still || still.length === 0) {
-        // 没有 owner 了，promote 第一个
         const { data: first } = await supabase.from('room_members').select('*').eq('room_id', roomId).order('joined_at', { ascending: true }).limit(1);
         if (first && first.length > 0) {
           await supabase.from('room_members').update({ is_owner: true }).eq('id', first[0].id);
@@ -843,6 +859,8 @@
         }
       }
     }
+
+    // 7. 最后用正确的权限渲染 UI
     renderPlayerListUI();
     playerCountEl.textContent = allPlayers.length;
     const _mode = currentRoom ? (currentRoom.game_mode || 'speed') : 'speed';
@@ -859,7 +877,7 @@
       lastPlayerNames = '';
       return;
     }
-    const names = allPlayers.map(p => p.name + p.player_token).join(',');
+    const names = allPlayers.map(p => p.name + p.player_token + (p.is_owner ? 'O' : '')).join(',');
     if (names === lastPlayerNames) return;
     lastPlayerNames = names;
     playerListEl.innerHTML = allPlayers.map(p => {
@@ -918,6 +936,10 @@
         if (action === 'kick') {
           if (!confirm('确定要踢出该成员吗？')) return;
           await supabase.from('room_members').delete().eq('room_id', roomId).eq('user_token', targetToken);
+          // 广播通知被踢的人立即退出
+          if (gameChannel) {
+            gameChannel.send({ type: 'broadcast', event: 'kicked', payload: { target_token: targetToken } });
+          }
           showToast('已踢出');
           fetchWaitingPlayers();
         } else if (action === 'transfer') {
@@ -1637,6 +1659,16 @@
         }
         stopAllIntervals();
         enterWaitingRoom(currentRoom);
+      })
+      .on('broadcast', { event: 'kicked' }, payload => {
+        if (payload.payload.target_token === playerToken) {
+          showToast('你已被移出房间');
+          currentRoom = null; isRoomOwner = false; roomId = null; allPlayers = [];
+          localStorage.removeItem('active_room_id');
+          localStorage.removeItem('active_room_name');
+          localStorage.removeItem('active_room_owner');
+          enterLobby();
+        }
       })
       .on('broadcast', { event: 'prop_intro' }, () => {
         showPropIntro();
