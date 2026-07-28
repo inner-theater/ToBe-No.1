@@ -1690,6 +1690,8 @@
         const p = payload.payload;
         if (p.token !== playerToken && arenaPlayers[p.token]) {
           const target = arenaPlayers[p.token];
+          // 被淘汰的玩家忽略位置更新
+          if (!target.alive) return;
           target.targetX = p.x;
           target.targetY = p.y;
           // 击退保护期内不覆盖速度，让击退效果自然衰减
@@ -1752,6 +1754,11 @@
         if (arenaPlayers[d.token]) {
           arenaEliminatePlayer(d.token, d.killed_by, d.assistants || []);
         }
+        // 如果对方被淘汰且只剩自己，提前结束游戏
+        const aliveCount = Object.values(arenaPlayers).filter(p => p.alive).length;
+        if (aliveCount <= 1 && arenaGameActive) {
+          setTimeout(endArenaGame, 1500);
+        }
       })
       .on('broadcast', { event: 'room_expired' }, () => {
         showToast('房间已到期，自动解散');
@@ -1762,6 +1769,8 @@
         const d = payload.payload;
         if (d.from === playerToken) return;
         if (!arenaGameActive) return;
+        // 如果发射者已经被淘汰，忽略其弹射物
+        if (arenaPlayers[d.from] && !arenaPlayers[d.from].alive) return;
         // 每人同时只能有1个弹射物（远程也一样）
         if (arenaProjectiles.some(p => p.ownerToken === d.from && p.alive)) return;
         const proj = {
@@ -1783,6 +1792,8 @@
         const d = payload.payload;
         if (!arenaPlayers[d.to]) return;
         const target = arenaPlayers[d.to];
+        // 如果目标已经被淘汰，忽略（防止退出后延迟到达的命中包）
+        if (!target.alive) return;
         // 1. 攻击者端移除对应的弹射物（防止穿透）
         if (d.from === playerToken && d.pid) {
           const idx = arenaProjectiles.findIndex(p => p.id === d.pid);
@@ -2005,7 +2016,10 @@
       for (const t of tokens) {
         if (t === playerToken) continue;
         const p = arenaPlayers[t];
-        if (!p.alive) continue;
+        if (!p.alive) {
+          // 被淘汰的玩家不再接收位置广播更新，保持隐藏状态
+          continue;
+        }
         let kbVx = 0, kbVy = 0;
         if (p.knockbackUntil && Date.now() < p.knockbackUntil) {
           kbVx = p.knockbackVx || 0;
@@ -2065,6 +2079,7 @@
 
       for (const t of tokens) {
         const p = arenaPlayers[t];
+        if (!p.alive) continue;
         p.el.style.left = toScreenX(p.x) + 'px';
         p.el.style.top = toScreenY(p.y) + 'px';
       }
@@ -2536,6 +2551,13 @@
     p.alive = false;
     p.eliminatedAt = Date.now();
     p.el.classList.add('arena-eliminated');
+    // 隐藏被淘汰玩家的 DOM（退出后对方不应再看到）
+    setTimeout(() => {
+      if (p.el && p.el.parentNode) {
+        p.el.style.opacity = '0';
+        p.el.style.pointerEvents = 'none';
+      }
+    }, 2000);
     if (killedBy && arenaPlayers[killedBy]) arenaPlayers[killedBy].kills++;
     (assistants || []).forEach(a => {
       if (arenaPlayers[a] && a !== killedBy && a !== token) arenaPlayers[a].assists++;
@@ -2550,6 +2572,7 @@
     }
     const aliveCount = Object.values(arenaPlayers).filter(p => p.alive).length;
     saveArenaGameState();
+    // 只剩自己时立即结束（对方退出后触发）
     if (aliveCount <= 1) {
       setTimeout(endArenaGame, 1500);
     }
@@ -2593,6 +2616,7 @@
     const eliminated = arr.filter(p => !p.alive);
     let ranking;
     if (survivors.length <= 1) {
+      // 只剩1人（对方退出）或0人，按存活时间排序
       ranking = arr.sort((a, b) => b.survivalTime - a.survivalTime);
     } else {
       survivors.sort((a, b) => b.hp - a.hp);
@@ -2855,6 +2879,15 @@
   // 可靠退出：sendBeacon 确保关闭网页也能发送离线信号
   function markOffline() {
     if (!playerToken) return;
+    // 如果正在大乱斗中且还活着，广播自己被淘汰（让对手看到）
+    if (arenaGameActive && arenaPlayers[playerToken] && arenaPlayers[playerToken].alive && gameChannel) {
+      try {
+        gameChannel.send({
+          type: 'broadcast', event: 'arena_eliminated',
+          payload: { token: playerToken, killed_by: null, assistants: [], time: Date.now() }
+        });
+      } catch(e) {}
+    }
     const url = `${SUPABASE_CONFIG.url}/rest/v1/users?player_token=eq.${playerToken}`;
     const body = JSON.stringify({ is_online: false, last_seen: new Date().toISOString() });
     navigator.sendBeacon(url, new Blob([body], {type:'application/json'}));
