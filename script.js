@@ -1692,8 +1692,11 @@
           const target = arenaPlayers[p.token];
           target.targetX = p.x;
           target.targetY = p.y;
-          target.targetVx = p.vx || 0;
-          target.targetVy = p.vy || 0;
+          // 击退保护期内不覆盖速度，让击退效果自然衰减
+          if (!(target.knockbackUntil && Date.now() < target.knockbackUntil)) {
+            target.targetVx = p.vx || 0;
+            target.targetVy = p.vy || 0;
+          }
           target.lastPosTime = Date.now();
           // 同步血量（位置广播每100ms一次，保证围观者实时看到）
           if (typeof p.hp === 'number') {
@@ -1791,14 +1794,16 @@
         saveArenaGameState();
         // 3. 所有客户端同步击退（攻击者、被打者、观众都生效）
         if (d.vx && d.vy) {
-          const pushForce = 4;
-          target.vx = d.vx * pushForce;
-          target.vy = d.vy * pushForce;
-          target.targetVx = target.vx;
-          target.targetVy = target.vy;
+          const pushForce = 6;
+          target.knockbackVx = d.vx * pushForce;
+          target.knockbackVy = d.vy * pushForce;
+          target.knockbackUntil = Date.now() + 350;
+          // 同时更新目标速度，让远程玩家平滑过渡
+          target.targetVx = d.vx * pushForce;
+          target.targetVy = d.vy * pushForce;
           // 更新 targetX/Y 预估位置，防止漂移修正把玩家拉回旧位置抵消击退
-          target.targetX = (d.x || target.x) + d.vx * pushForce * 4;
-          target.targetY = (d.y || target.y) + d.vy * pushForce * 4;
+          target.targetX = (d.x || target.x) + d.vx * pushForce * 3;
+          target.targetY = (d.y || target.y) + d.vy * pushForce * 3;
         }
         // 4. 播放命中特效+变色
         const hitEl = document.createElement('span');
@@ -1979,29 +1984,44 @@
       const margin = 2;
       const maxVel = 5;
 
-      // 本地玩家：摇杆控制速度
+      // 本地玩家：摇杆控制速度 + 击退叠加
       const me = arenaPlayers[playerToken];
       if (me && me.alive) {
-        me.vx = arenaMoveDir.x * moveSpeed;
-        me.vy = arenaMoveDir.y * moveSpeed;
+        let kbVx = 0, kbVy = 0;
+        if (me.knockbackUntil && Date.now() < me.knockbackUntil) {
+          kbVx = me.knockbackVx || 0;
+          kbVy = me.knockbackVy || 0;
+          me.knockbackVx *= 0.88;
+          me.knockbackVy *= 0.88;
+        }
+        me.vx = arenaMoveDir.x * moveSpeed + kbVx;
+        me.vy = arenaMoveDir.y * moveSpeed + kbVy;
         me.x += me.vx * dt;
         me.y += me.vy * dt;
       }
 
-      // 远程玩家：速度平滑过渡 + 位置修正
+      // 远程玩家：速度平滑过渡 + 位置修正 + 击退叠加
       const tokens = Object.keys(arenaPlayers);
       for (const t of tokens) {
         if (t === playerToken) continue;
         const p = arenaPlayers[t];
         if (!p.alive) continue;
+        let kbVx = 0, kbVy = 0;
+        if (p.knockbackUntil && Date.now() < p.knockbackUntil) {
+          kbVx = p.knockbackVx || 0;
+          kbVy = p.knockbackVy || 0;
+          p.knockbackVx *= 0.88;
+          p.knockbackVy *= 0.88;
+        }
         // 速度平滑过渡到目标速度（消除抖动）
         p.vx += ((p.targetVx || 0) - p.vx) * 0.25;
         p.vy += ((p.targetVy || 0) - p.vy) * 0.25;
-        p.x += p.vx * dt;
-        p.y += p.vy * dt;
-        // 轻柔消除漂移
-        p.x += (p.targetX - p.x) * 0.03;
-        p.y += (p.targetY - p.y) * 0.03;
+        p.x += (p.vx + kbVx) * dt;
+        p.y += (p.vy + kbVy) * dt;
+        // 轻柔消除漂移（击退保护期内减弱修正）
+        const driftFactor = (p.knockbackUntil && Date.now() < p.knockbackUntil) ? 0.005 : 0.03;
+        p.x += (p.targetX - p.x) * driftFactor;
+        p.y += (p.targetY - p.y) * driftFactor;
       }
 
       // 墙壁反弹（所有存活玩家）
@@ -2165,9 +2185,10 @@
         if (dist < 28) {
           hitSomething = true;
           removeProjectile(i);
-          const pushForce = 4;
-          me.vx = proj.vx * pushForce;
-          me.vy = proj.vy * pushForce;
+          const pushForce = 6;
+          me.knockbackVx = proj.vx * pushForce;
+          me.knockbackVy = proj.vy * pushForce;
+          me.knockbackUntil = Date.now() + 350;
           me.hp = Math.max(0, me.hp - 1);
           me.lastHitBy = proj.ownerToken;
           me.lastHitTime = Date.now();
@@ -2240,12 +2261,13 @@
             if (Date.now() - lastPos > 3000) {
               target.hp = Math.max(0, target.hp - 1);
               updateArenaHpDisplay(t);
-              target.vx = proj.vx * 4;
-              target.vy = proj.vy * 4;
-              target.targetVx = target.vx;
-              target.targetVy = target.vy;
-              target.targetX = target.x + proj.vx * 4 * 4;
-              target.targetY = target.y + proj.vy * 4 * 4;
+              target.knockbackVx = proj.vx * 6;
+              target.knockbackVy = proj.vy * 6;
+              target.knockbackUntil = Date.now() + 350;
+              target.targetVx = target.knockbackVx;
+              target.targetVy = target.knockbackVy;
+              target.targetX = target.x + proj.vx * 6 * 3;
+              target.targetY = target.y + proj.vy * 6 * 3;
               gameChannel.send({
                 type: 'broadcast', event: 'arena_self_hit',
                 payload: { from: playerToken, to: t, ammo: proj.ammoType, hp: target.hp, x: target.x, y: target.y, vx: proj.vx, vy: proj.vy, pid: proj.id }
